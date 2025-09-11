@@ -1,0 +1,1077 @@
+{
+  "info": {
+    "_postman_id": "e8f9b3a7-5c1d-4f3e-8d5a-6b7c8d9e0f1a",
+    "name": "E-Commerce API",
+    "description": "A comprehensive RESTful API for e-commerce applications built with Node.js, Express, TypeScript, and MongoDB.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:5000/api/v1",
+      "type": "string"
+    },
+    {
+      "key": "token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "userId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "productId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "orderId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "addressId",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Authentication",
+      "description": "Endpoints for user authentication, registration, and password management",
+      "item": [
+        {
+          "name": "Register User",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"John Doe\",\n  \"email\": \"john@example.com\",\n  \"password\": \"password123\",\n  \"confirmPassword\": \"password123\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/register",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "register"]
+            },
+            "description": "Register a new user account"
+          },
+          "response": []
+        },
+        {
+          "name": "Login User",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"john@example.com\",\n  \"password\": \"password123\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "login"]
+            },
+            "description": "Login with existing credentials and receive authentication token"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var jsonData = pm.response.json();\n",
+                  "if (jsonData && jsonData.token) {\n",
+                  "    pm.environment.set(\"token\", jsonData.token);\n",
+                  "    console.log(\"Token saved to environment\");\n",
+                  "}\n"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Verify Email",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/auth/verify-email/:token",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "verify-email", ":token"],
+              "variable": [
+                {
+                  "key": "token",
+                  "value": "verification-token-here",
+                  "description": "Email verification token"
+                }
+              ]
+            },
+            "description": "Verify user email with token sent to their email address"
+          },
+          "response": []
+        },
+        {
+          "name": "Forgot Password",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"john@example.com\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/forgot-password",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "forgot-password"]
+            },
+            "description": "Request password reset email"
+          },
+          "response": []
+        },
+        {
+          "name": "Reset Password",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"password\": \"newpassword123\",\n  \"confirmPassword\": \"newpassword123\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/reset-password/:token",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "reset-password", ":token"],
+              "variable": [
+                {
+                  "key": "token",
+                  "value": "reset-token-here",
+                  "description": "Password reset token"
+                }
+              ]
+            },
+            "description": "Reset password using token received via email"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Users",
+      "description": "Endpoints for user profile management, addresses, cart, and favorites",
+      "item": [
+        {
+          "name": "Get User Profile",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/users/profile",
+              "host": ["{{baseUrl}}"],
+              "path": ["users", "profile"]
+            },
+            "description": "Get current user's profile information"
+          },
+          "response": []
+        },
+        {
+          "name": "Update User Profile",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Updated Name\",\n  \"email\": \"updated@example.com\",\n  \"phone\": \"1234567890\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/users/profile",
+              "host": ["{{baseUrl}}"],
+              "path": ["users", "profile"]
+            },
+            "description": "Update current user's profile information"
+          },
+          "response": []
+        },
+        {
+          "name": "Update User Password",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currentPassword\": \"password123\",\n  \"newPassword\": \"newpassword123\",\n  \"confirmPassword\": \"newpassword123\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/users/update-password",
+              "host": ["{{baseUrl}}"],
+              "path": ["users", "update-password"]
+            },
+            "description": "Update current user's password"
+          },
+          "response": []
+        },
+        {
+          "name": "Add User Address",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"addressType\": \"shipping\",\n  \"street\": \"123 Main St\",\n  \"city\": \"New York\",\n  \"state\": \"NY\",\n  \"postalCode\": \"10001\",\n  \"country\": \"USA\",\n  \"isDefault\": true\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/users/address",
+              "host": ["{{baseUrl}}"],
+              "path": ["users", "address"]
+            },
+            "description": "Add a new address to user profile"
+          },
+          "response": []
+        },
+        {
+          "name": "Update User Address",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"street\": \"456 Updated St\",\n  \"city\": \"Los Angeles\",\n  \"state\": \"CA\",\n  \"postalCode\": \"90001\",\n  \"country\": \"USA\",\n  \"isDefault\": true\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/users/address/:addressId",
+              "host": ["{{baseUrl}}"],
+              "path": ["users", "address", ":addressId"],
+              "variable": [
+                {
+                  "key": "addressId",
+                  "value": "address-id-here",
+                  "description": "ID of the address to update"
+                }
+              ]
+            },
+            "description": "Update an existing address"
+          },
+          "response": []
+        },
+        {
+          "name": "Delete User Address",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/users/address/:addressId",
+              "host": ["{{baseUrl}}"],
+              "path": ["users", "address", ":addressId"],
+              "variable": [
+                {
+                  "key": "addressId",
+                  "value": "address-id-here",
+                  "description": "ID of the address to delete"
+                }
+              ]
+            },
+            "description": "Delete an existing address"
+          },
+          "response": []
+        },
+        {
+          "name": "Add To Cart",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"productId\": \"product-id-here\",\n  \"quantity\": 1,\n  \"color\": \"black\",\n  \"size\": \"M\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/users/cart",
+              "host": ["{{baseUrl}}"],
+              "path": ["users", "cart"]
+            },
+            "description": "Add a product to the shopping cart"
+          },
+          "response": []
+        },
+        {
+          "name": "Update Cart Item",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"quantity\": 3,\n  \"color\": \"blue\",\n  \"size\": \"L\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/users/cart/:productId",
+              "host": ["{{baseUrl}}"],
+              "path": ["users", "cart", ":productId"],
+              "variable": [
+                {
+                  "key": "productId",
+                  "value": "product-id-here",
+                  "description": "ID of the product in cart to update"
+                }
+              ]
+            },
+            "description": "Update quantity or options of a cart item"
+          },
+          "response": []
+        },
+        {
+          "name": "Remove From Cart",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/users/cart/:productId",
+              "host": ["{{baseUrl}}"],
+              "path": ["users", "cart", ":productId"],
+              "variable": [
+                {
+                  "key": "productId",
+                  "value": "product-id-here",
+                  "description": "ID of the product to remove from cart"
+                }
+              ]
+            },
+            "description": "Remove a product from the shopping cart"
+          },
+          "response": []
+        },
+        {
+          "name": "Clear Cart",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/users/cart",
+              "host": ["{{baseUrl}}"],
+              "path": ["users", "cart"]
+            },
+            "description": "Remove all items from the shopping cart"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Favorites",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/users/favorites",
+              "host": ["{{baseUrl}}"],
+              "path": ["users", "favorites"]
+            },
+            "description": "Get user's favorite products"
+          },
+          "response": []
+        },
+        {
+          "name": "Add To Favorites",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"productId\": \"product-id-here\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/users/favorites",
+              "host": ["{{baseUrl}}"],
+              "path": ["users", "favorites"]
+            },
+            "description": "Add a product to favorites"
+          },
+          "response": []
+        },
+        {
+          "name": "Remove From Favorites",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/users/favorites/:productId",
+              "host": ["{{baseUrl}}"],
+              "path": ["users", "favorites", ":productId"],
+              "variable": [
+                {
+                  "key": "productId",
+                  "value": "product-id-here",
+                  "description": "ID of the product to remove from favorites"
+                }
+              ]
+            },
+            "description": "Remove a product from favorites"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Order History",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/users/orders",
+              "host": ["{{baseUrl}}"],
+              "path": ["users", "orders"]
+            },
+            "description": "Get user's order history"
+          },
+          "response": []
+        },
+        {
+          "name": "Get All Users (Admin)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/users",
+              "host": ["{{baseUrl}}"],
+              "path": ["users"]
+            },
+            "description": "Get all users (Admin only)"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Products",
+      "description": "Endpoints for product management and reviews",
+      "item": [
+        {
+          "name": "Get All Products",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/products?keyword=shirt&category=clothing&price[gte]=10&price[lte]=100&rating[gte]=4&sort=-createdAt&page=1&limit=10",
+              "host": ["{{baseUrl}}"],
+              "path": ["products"],
+              "query": [
+                {
+                  "key": "keyword",
+                  "value": "shirt",
+                  "description": "Search term"
+                },
+                {
+                  "key": "category",
+                  "value": "clothing",
+                  "description": "Filter by category"
+                },
+                {
+                  "key": "price[gte]",
+                  "value": "10",
+                  "description": "Minimum price"
+                },
+                {
+                  "key": "price[lte]",
+                  "value": "100",
+                  "description": "Maximum price"
+                },
+                {
+                  "key": "rating[gte]",
+                  "value": "4",
+                  "description": "Minimum rating"
+                },
+                {
+                  "key": "sort",
+                  "value": "-createdAt",
+                  "description": "Sort order (prefix with - for descending)"
+                },
+                {
+                  "key": "page",
+                  "value": "1",
+                  "description": "Page number"
+                },
+                {
+                  "key": "limit",
+                  "value": "10",
+                  "description": "Results per page"
+                }
+              ]
+            },
+            "description": "Get all products with filtering, sorting, and pagination"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Featured Products",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/products/featured",
+              "host": ["{{baseUrl}}"],
+              "path": ["products", "featured"]
+            },
+            "description": "Get featured products"
+          },
+          "response": []
+        },
+        {
+          "name": "Get On Sale Products",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/products/sale",
+              "host": ["{{baseUrl}}"],
+              "path": ["products", "sale"]
+            },
+            "description": "Get products on sale"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Product By ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/products/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["products", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "product-id-or-slug-here",
+                  "description": "Product ID or slug"
+                }
+              ]
+            },
+            "description": "Get a single product by ID or slug"
+          },
+          "response": []
+        },
+        {
+          "name": "Create Product (Admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"New Product\",\n  \"description\": \"Product description\",\n  \"price\": 29.99,\n  \"category\": \"Electronics\",\n  \"brand\": \"Brand Name\",\n  \"countInStock\": 100,\n  \"images\": [\n    \"https://example.com/image1.jpg\",\n    \"https://example.com/image2.jpg\"\n  ],\n  \"isFeatured\": false,\n  \"isOnSale\": false,\n  \"salePrice\": null,\n  \"variations\": [\n    {\n      \"color\": \"Black\",\n      \"size\": \"M\",\n      \"countInStock\": 50\n    },\n    {\n      \"color\": \"White\",\n      \"size\": \"L\",\n      \"countInStock\": 50\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/products",
+              "host": ["{{baseUrl}}"],
+              "path": ["products"]
+            },
+            "description": "Create a new product (Admin only)"
+          },
+          "response": []
+        },
+        {
+          "name": "Update Product (Admin)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Updated Product\",\n  \"description\": \"Updated description\",\n  \"price\": 39.99,\n  \"category\": \"Electronics\",\n  \"brand\": \"Updated Brand\",\n  \"countInStock\": 75,\n  \"isFeatured\": true,\n  \"isOnSale\": true,\n  \"salePrice\": 29.99\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/products/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["products", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "product-id-here",
+                  "description": "Product ID to update"
+                }
+              ]
+            },
+            "description": "Update an existing product (Admin only)"
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Product (Admin)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/products/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["products", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "product-id-here",
+                  "description": "Product ID to delete"
+                }
+              ]
+            },
+            "description": "Delete a product (Admin only)"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Product Reviews",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/products/:id/reviews",
+              "host": ["{{baseUrl}}"],
+              "path": ["products", ":id", "reviews"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "product-id-here",
+                  "description": "Product ID to get reviews for"
+                }
+              ]
+            },
+            "description": "Get all reviews for a product"
+          },
+          "response": []
+        },
+        {
+          "name": "Create Product Review",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rating\": 5,\n  \"comment\": \"Great product, highly recommended!\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/products/:id/reviews",
+              "host": ["{{baseUrl}}"],
+              "path": ["products", ":id", "reviews"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "product-id-here",
+                  "description": "Product ID to review"
+                }
+              ]
+            },
+            "description": "Create a new review for a product"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Orders",
+      "description": "Endpoints for order management",
+      "item": [
+        {
+          "name": "Create Order",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"orderItems\": [\n    {\n      \"productId\": \"product-id-here\",\n      \"name\": \"Product Name\",\n      \"image\": \"https://example.com/image.jpg\",\n      \"price\": 29.99,\n      \"quantity\": 2,\n      \"color\": \"Black\",\n      \"size\": \"M\"\n    }\n  ],\n  \"shippingAddress\": {\n    \"street\": \"123 Main St\",\n    \"city\": \"New York\",\n    \"state\": \"NY\",\n    \"postalCode\": \"10001\",\n    \"country\": \"USA\"\n  },\n  \"paymentMethod\": \"PayPal\",\n  \"itemsPrice\": 59.98,\n  \"taxPrice\": 6.00,\n  \"shippingPrice\": 10.00,\n  \"totalPrice\": 75.98\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/orders",
+              "host": ["{{baseUrl}}"],
+              "path": ["orders"]
+            },
+            "description": "Create a new order"
+          },
+          "response": []
+        },
+        {
+          "name": "Get My Orders",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/orders/myorders",
+              "host": ["{{baseUrl}}"],
+              "path": ["orders", "myorders"]
+            },
+            "description": "Get all orders for the logged-in user"
+          },
+          "response": []
+        },
+        {
+          "name": "Get All Orders (Admin)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/orders",
+              "host": ["{{baseUrl}}"],
+              "path": ["orders"]
+            },
+            "description": "Get all orders (Admin only)"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Order By ID",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/orders/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["orders", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "order-id-here",
+                  "description": "Order ID or order number"
+                }
+              ]
+            },
+            "description": "Get details of a specific order"
+          },
+          "response": []
+        },
+        {
+          "name": "Update Order to Paid",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"paymentResult\": {\n    \"id\": \"payment-id-from-gateway\",\n    \"status\": \"COMPLETED\",\n    \"update_time\": \"2023-06-15T12:00:00Z\",\n    \"email_address\": \"payer@example.com\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/orders/:id/pay",
+              "host": ["{{baseUrl}}"],
+              "path": ["orders", ":id", "pay"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "order-id-here",
+                  "description": "Order ID to mark as paid"
+                }
+              ]
+            },
+            "description": "Update order to paid status with payment result"
+          },
+          "response": []
+        },
+        {
+          "name": "Update Order to Delivered (Admin)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/orders/:id/deliver",
+              "host": ["{{baseUrl}}"],
+              "path": ["orders", ":id", "deliver"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "order-id-here",
+                  "description": "Order ID to mark as delivered"
+                }
+              ]
+            },
+            "description": "Update order to delivered status (Admin only)"
+          },
+          "response": []
+        },
+        {
+          "name": "Update Order Status (Admin)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"shipped\",\n  \"notes\": \"Order has been shipped via FedEx\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/orders/:id/status",
+              "host": ["{{baseUrl}}"],
+              "path": ["orders", ":id", "status"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "order-id-here",
+                  "description": "Order ID to update status"
+                }
+              ]
+            },
+            "description": "Update order status (processing, shipped, delivered, refunded, etc.)"
+          },
+          "response": []
+        },
+        {
+          "name": "Add Tracking Information (Admin)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"trackingNumber\": \"1Z999AA10123456784\",\n  \"carrier\": \"UPS\",\n  \"trackingUrl\": \"https://www.ups.com/track?tracknum=1Z999AA10123456784\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/orders/:id/tracking",
+              "host": ["{{baseUrl}}"],
+              "path": ["orders", ":id", "tracking"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "order-id-here",
+                  "description": "Order ID to add tracking information"
+                }
+              ]
+            },
+            "description": "Add shipping tracking information to an order (Admin only)"
+          },
+          "response": []
+        },
+        {
+          "name": "Cancel Order",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Changed my mind about the purchase\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/orders/:id/cancel",
+              "host": ["{{baseUrl}}"],
+              "path": ["orders", ":id", "cancel"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "order-id-here",
+                  "description": "Order ID to cancel"
+                }
+              ]
+            },
+            "description": "Cancel an order (only if not yet shipped)"
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}
