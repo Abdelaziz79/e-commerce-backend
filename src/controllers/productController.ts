@@ -434,3 +434,124 @@ export const getProductReviews = catchAsync(
     });
   }
 );
+
+/**
+ * @desc    Update product review
+ * @route   PUT /api/products/:id/reviews/:reviewId
+ * @access  Private
+ */
+export const updateProductReview = catchAsync(
+  async (req: AuthRequest, res: Response) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    if (!req.user) {
+      return res.status(401).json({ message: "Not authorized" });
+    }
+
+    const { rating, comment, title, images } = req.body;
+    const { id, reviewId } = req.params;
+
+    const product = await Product.findById(id);
+
+    if (!product) {
+      return res.status(404).json({ message: "Product not found" });
+    }
+
+    // Find the review
+    const review = product.reviews.find((r) => r._id?.toString() === reviewId);
+
+    if (!review) {
+      return res.status(404).json({ message: "Review not found" });
+    }
+
+    // Check if the review belongs to the user
+    if (review.user.toString() !== req.user._id.toString()) {
+      return res
+        .status(403)
+        .json({ message: "Not authorized to update this review" });
+    }
+
+    // Update review fields
+    review.rating = Number(rating) || review.rating;
+    review.comment = comment || review.comment;
+    review.title = title !== undefined ? title : review.title;
+    review.images = images || review.images;
+
+    // Recalculate product rating
+    product.rating =
+      product.reviews.reduce((acc, item) => item.rating + acc, 0) /
+      product.reviews.length;
+
+    await product.save();
+
+    res.status(200).json({
+      status: "success",
+      message: "Review updated successfully",
+      data: review,
+    });
+  }
+);
+
+/**
+ * @desc    Delete product review
+ * @route   DELETE /api/products/:id/reviews/:reviewId
+ * @access  Private
+ */
+export const deleteProductReview = catchAsync(
+  async (req: AuthRequest, res: Response) => {
+    if (!req.user) {
+      return res.status(401).json({ message: "Not authorized" });
+    }
+
+    const { id, reviewId } = req.params;
+    const product = await Product.findById(id);
+
+    if (!product) {
+      return res.status(404).json({ message: "Product not found" });
+    }
+
+    // Find the review
+    const review = product.reviews.find((r) => r._id?.toString() === reviewId);
+
+    if (!review) {
+      return res.status(404).json({ message: "Review not found" });
+    }
+
+    // Check if the review belongs to the user or if user is admin
+    if (
+      review.user.toString() !== req.user._id.toString() &&
+      req.user.role !== "admin"
+    ) {
+      return res
+        .status(403)
+        .json({ message: "Not authorized to delete this review" });
+    }
+
+    // Remove the review
+    product.reviews = product.reviews.filter(
+      (r) => r._id?.toString() !== reviewId
+    );
+
+    // Update review count
+    product.numReviews = product.reviews.length;
+
+    // Recalculate product rating if there are still reviews
+    if (product.reviews.length > 0) {
+      product.rating =
+        product.reviews.reduce((acc, item) => item.rating + acc, 0) /
+        product.reviews.length;
+    } else {
+      product.rating = 0;
+    }
+
+    await product.save();
+
+    res.status(200).json({
+      status: "success",
+      message: "Review deleted successfully",
+    });
+  }
+);

@@ -10,6 +10,7 @@ import {
   sendVerificationEmail,
 } from "../utils/emailService";
 import generateToken from "../utils/generateToken";
+import Order from "../models/orderModel";
 
 /**
  * @desc    Auth user & get token
@@ -402,7 +403,7 @@ export const deleteUserAddress = catchAsync(
  */
 export const addToCart = catchAsync(async (req: AuthRequest, res: Response) => {
   if (!req.user) {
-    return res.status(404).json({ message: "User not found" });
+    return res.status(401).json({ message: "Authentication required" });
   }
 
   const user = await User.findById(req.user._id);
@@ -410,7 +411,7 @@ export const addToCart = catchAsync(async (req: AuthRequest, res: Response) => {
     return res.status(404).json({ message: "User not found" });
   }
 
-  const { productId, name, price, quantity, image } = req.body;
+  const { productId, quantity = 1, variation } = req.body;
 
   // Validate that product exists
   const product = await Product.findById(productId);
@@ -418,22 +419,59 @@ export const addToCart = catchAsync(async (req: AuthRequest, res: Response) => {
     return res.status(404).json({ message: "Product not found" });
   }
 
-  // Check if product already in cart
-  const existingProductIndex = user.cart.findIndex(
-    (item: any) => item.product.toString() === productId
-  );
+  // Check stock availability for variations or main product
+  let availableStock = product.countInStock;
+  let productPrice = product.price;
+  let productImage = product.mainImage || product.images[0];
+
+  if (variation && product.hasVariations) {
+    const productVariation = product.variations.find(
+      (v) => v.sku === variation.sku
+    );
+    if (!productVariation) {
+      return res.status(400).json({ message: "Product variation not found" });
+    }
+    availableStock = productVariation.countInStock;
+    productPrice = productVariation.price;
+  }
+
+  // Check if enough stock is available
+  if (availableStock < quantity) {
+    return res.status(400).json({
+      message: `Only ${availableStock} items available in stock`,
+    });
+  }
+
+  // Check if product with same variation already in cart
+  const existingProductIndex = user.cart.findIndex((item: any) => {
+    const sameProduct = item.product.toString() === productId;
+    if (!variation) return sameProduct;
+
+    // Compare variations if they exist
+    return sameProduct && item.variation?.sku === variation.sku;
+  });
 
   if (existingProductIndex >= 0) {
-    // Update quantity if product already in cart
-    user.cart[existingProductIndex].quantity += quantity || 1;
+    // Check if total quantity would exceed stock
+    const newQuantity = user.cart[existingProductIndex].quantity + quantity;
+    if (newQuantity > availableStock) {
+      return res.status(400).json({
+        message: `Cannot add ${quantity} more items. Only ${
+          availableStock - user.cart[existingProductIndex].quantity
+        } more can be added`,
+      });
+    }
+
+    user.cart[existingProductIndex].quantity = newQuantity;
   } else {
     // Add new product to cart
     user.cart.push({
       product: productId,
-      name: name || product.name, // Use product name if not provided
-      price: price || product.price, // Use product price if not provided
-      quantity: quantity || 1,
-      image: image || product.images[0], // Use product image if not provided
+      name: product.name,
+      price: productPrice,
+      quantity: quantity,
+      image: productImage,
+      variation: variation || undefined,
     });
   }
 
@@ -441,8 +479,82 @@ export const addToCart = catchAsync(async (req: AuthRequest, res: Response) => {
 
   res.status(200).json({
     status: "success",
+    message: "Item added to cart successfully",
     data: {
       cart: user.cart,
+      cartCount: user.cart.reduce((total, item) => total + item.quantity, 0),
+    },
+  });
+});
+
+/**
+ * @desc    Get user's cart
+ * @route   GET /api/users/cart
+ * @access  Private
+ */
+export const getCart = catchAsync(async (req: AuthRequest, res: Response) => {
+  if (!req.user) {
+    return res.status(401).json({ message: "Authentication required" });
+  }
+
+  const user = await User.findById(req.user._id).populate({
+    path: "cart.product",
+    select:
+      "name price images countInStock hasVariations variations onSale salePrice",
+  });
+
+  if (!user) {
+    return res.status(404).json({ message: "User not found" });
+  }
+
+  // Calculate cart totals and validate stock
+  let cartTotal = 0;
+  const cartWithValidation = user.cart.map((item: any) => {
+    const cartItem = item.toObject();
+
+    // Check if product still exists and is in stock
+    if (!item.product) {
+      cartItem.stockStatus = "unavailable";
+      cartItem.maxQuantity = 0;
+    } else {
+      let availableStock = item.product.countInStock;
+      let currentPrice = item.product.price;
+
+      // Handle variations
+      if (item.variation && item.product.hasVariations) {
+        const variation = item.product.variations.find(
+          (v: any) => v.sku === item.variation.sku
+        );
+        if (variation) {
+          availableStock = variation.countInStock;
+          currentPrice = variation.price;
+        }
+      }
+
+      // Check for sale price
+      if (item.product.onSale && item.product.salePrice) {
+        currentPrice = item.product.salePrice;
+      }
+
+      cartItem.stockStatus = availableStock > 0 ? "available" : "out_of_stock";
+      cartItem.maxQuantity = availableStock;
+      cartItem.currentPrice = currentPrice;
+      cartItem.priceChanged = currentPrice !== item.price;
+
+      if (availableStock > 0) {
+        cartTotal += currentPrice * Math.min(item.quantity, availableStock);
+      }
+    }
+
+    return cartItem;
+  });
+
+  res.status(200).json({
+    status: "success",
+    data: {
+      cart: cartWithValidation,
+      cartCount: user.cart.reduce((total, item) => total + item.quantity, 0),
+      cartTotal: parseFloat(cartTotal.toFixed(2)),
     },
   });
 });
@@ -455,22 +567,23 @@ export const addToCart = catchAsync(async (req: AuthRequest, res: Response) => {
 export const updateCartItem = catchAsync(
   async (req: AuthRequest, res: Response) => {
     if (!req.user) {
-      return res.status(404).json({ message: "User not found" });
+      return res.status(401).json({ message: "Authentication required" });
     }
 
     const user = await User.findById(req.user._id);
-
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
 
     const { productId } = req.params;
-    const { quantity } = req.body;
+    const { quantity, variationSku } = req.body;
 
     // Find product in cart
-    const productIndex = user.cart.findIndex(
-      (item: any) => item.product.toString() === productId
-    );
+    const productIndex = user.cart.findIndex((item: any) => {
+      const sameProduct = item.product.toString() === productId;
+      if (!variationSku) return sameProduct;
+      return sameProduct && item.variation?.sku === variationSku;
+    });
 
     if (productIndex === -1) {
       return res.status(404).json({ message: "Product not found in cart" });
@@ -478,10 +591,33 @@ export const updateCartItem = catchAsync(
 
     // Update quantity or remove if quantity is 0
     if (quantity <= 0) {
-      user.cart = user.cart.filter(
-        (item: any) => item.product.toString() !== productId
-      );
+      user.cart.splice(productIndex, 1);
     } else {
+      // Validate stock before updating
+      const product = await Product.findById(productId);
+      if (!product) {
+        return res.status(404).json({ message: "Product no longer exists" });
+      }
+
+      let availableStock = product.countInStock;
+      if (variationSku && product.hasVariations) {
+        const variation = product.variations.find(
+          (v) => v.sku === variationSku
+        );
+        if (!variation) {
+          return res
+            .status(400)
+            .json({ message: "Product variation not found" });
+        }
+        availableStock = variation.countInStock;
+      }
+
+      if (quantity > availableStock) {
+        return res.status(400).json({
+          message: `Only ${availableStock} items available in stock`,
+        });
+      }
+
       user.cart[productIndex].quantity = quantity;
     }
 
@@ -489,8 +625,11 @@ export const updateCartItem = catchAsync(
 
     res.status(200).json({
       status: "success",
+      message:
+        quantity > 0 ? "Cart updated successfully" : "Item removed from cart",
       data: {
         cart: user.cart,
+        cartCount: user.cart.reduce((total, item) => total + item.quantity, 0),
       },
     });
   }
@@ -504,28 +643,39 @@ export const updateCartItem = catchAsync(
 export const removeFromCart = catchAsync(
   async (req: AuthRequest, res: Response) => {
     if (!req.user) {
-      return res.status(404).json({ message: "User not found" });
+      return res.status(401).json({ message: "Authentication required" });
     }
 
     const user = await User.findById(req.user._id);
-
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
 
     const { productId } = req.params;
+    const { variationSku } = req.query;
+
+    // Store original cart length to check if item was found
+    const originalLength = user.cart.length;
 
     // Remove product from cart
-    user.cart = user.cart.filter(
-      (item: any) => item.product.toString() !== productId
-    );
+    user.cart = user.cart.filter((item: any) => {
+      const sameProduct = item.product.toString() === productId;
+      if (!variationSku) return !sameProduct;
+      return !(sameProduct && item.variation?.sku === variationSku);
+    });
+
+    if (user.cart.length === originalLength) {
+      return res.status(404).json({ message: "Product not found in cart" });
+    }
 
     await user.save();
 
     res.status(200).json({
       status: "success",
+      message: "Item removed from cart successfully",
       data: {
         cart: user.cart,
+        cartCount: user.cart.reduce((total, item) => total + item.quantity, 0),
       },
     });
   }
@@ -538,11 +688,10 @@ export const removeFromCart = catchAsync(
  */
 export const clearCart = catchAsync(async (req: AuthRequest, res: Response) => {
   if (!req.user) {
-    return res.status(404).json({ message: "User not found" });
+    return res.status(401).json({ message: "Authentication required" });
   }
 
   const user = await User.findById(req.user._id);
-
   if (!user) {
     return res.status(404).json({ message: "User not found" });
   }
@@ -552,8 +701,10 @@ export const clearCart = catchAsync(async (req: AuthRequest, res: Response) => {
 
   res.status(200).json({
     status: "success",
+    message: "Cart cleared successfully",
     data: {
       cart: user.cart,
+      cartCount: 0,
     },
   });
 });
@@ -566,7 +717,7 @@ export const clearCart = catchAsync(async (req: AuthRequest, res: Response) => {
 export const addToFavorites = catchAsync(
   async (req: AuthRequest, res: Response) => {
     if (!req.user) {
-      return res.status(404).json({ message: "User not found" });
+      return res.status(401).json({ message: "Authentication required" });
     }
 
     const user = await User.findById(req.user._id);
@@ -603,8 +754,10 @@ export const addToFavorites = catchAsync(
 
     res.status(200).json({
       status: "success",
+      message: "Product added to favorites successfully",
       data: {
         favorites: user.favorites,
+        favoritesCount: user.favorites.length,
       },
     });
   }
@@ -618,7 +771,7 @@ export const addToFavorites = catchAsync(
 export const removeFromFavorites = catchAsync(
   async (req: AuthRequest, res: Response) => {
     if (!req.user) {
-      return res.status(404).json({ message: "User not found" });
+      return res.status(401).json({ message: "Authentication required" });
     }
 
     const user = await User.findById(req.user._id);
@@ -628,17 +781,28 @@ export const removeFromFavorites = catchAsync(
 
     const { productId } = req.params;
 
+    // Store original length to check if item was found
+    const originalLength = user.favorites.length;
+
     // Remove from favorites
     user.favorites = user.favorites.filter(
       (item) => item.product.toString() !== productId
     );
 
+    if (user.favorites.length === originalLength) {
+      return res
+        .status(404)
+        .json({ message: "Product not found in favorites" });
+    }
+
     await user.save();
 
     res.status(200).json({
       status: "success",
+      message: "Product removed from favorites successfully",
       data: {
         favorites: user.favorites,
+        favoritesCount: user.favorites.length,
       },
     });
   }
@@ -648,27 +812,83 @@ export const removeFromFavorites = catchAsync(
  * @desc    Get user favorites/wishlist
  * @route   GET /api/users/favorites
  * @access  Private
+ * @query   ?page=1&limit=10&sort=-createdAt&keyword=search&price[gte]=100
  */
 export const getFavorites = catchAsync(
   async (req: AuthRequest, res: Response) => {
     if (!req.user) {
-      return res.status(404).json({ message: "User not found" });
+      return res.status(401).json({ message: "Authentication required" });
     }
 
-    const user = await User.findById(req.user._id).populate({
-      path: "favorites.product",
-      select: "name price images description rating numReviews",
-    });
+    const user = await User.findById(req.user._id).select("favorites");
 
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
 
+    // Filter out favorites where product no longer exists and get product IDs
+    const validFavoriteIds = [];
+    const validFavorites = [];
+
+    for (const favorite of user.favorites) {
+      if (favorite.product) {
+        validFavoriteIds.push(favorite.product);
+        validFavorites.push(favorite);
+      }
+    }
+
+    // Update user if some favorites were invalid
+    if (validFavorites.length !== user.favorites.length) {
+      user.favorites = validFavorites;
+      await user.save();
+    }
+
+    if (validFavoriteIds.length === 0) {
+      return res.status(200).json({
+        status: "success",
+        results: 0,
+        page: 1,
+        pages: 0,
+        total: 0,
+        data: {
+          favorites: [],
+        },
+      });
+    }
+
+    // Create base query for products in favorites
+    const baseQuery = Product.find({ _id: { $in: validFavoriteIds } });
+
+    // Apply API features
+    const features = new APIFeatures(baseQuery, req.query)
+      .filter()
+      .sort()
+      .limitFields()
+      .paginate();
+
+    // Execute query
+    const products = await features.query.select(
+      "name price images description rating numReviews onSale salePrice countInStock"
+    );
+
+    // Get total count for pagination (without pagination applied)
+    const totalFeatures = new APIFeatures(
+      Product.find({ _id: { $in: validFavoriteIds } }),
+      req.query
+    ).filter();
+    const total = await Product.countDocuments(totalFeatures.query.getFilter());
+
+    const page = Number(req.query.page?.toString() || "1");
+    const limit = Number(req.query.limit?.toString() || "10");
+
     res.status(200).json({
       status: "success",
-      results: user.favorites.length,
+      results: products.length,
+      page,
+      pages: Math.ceil(total / limit),
+      total,
       data: {
-        favorites: user.favorites,
+        favorites: products,
       },
     });
   }
@@ -678,28 +898,144 @@ export const getFavorites = catchAsync(
  * @desc    Get user order history
  * @route   GET /api/users/orders
  * @access  Private
+ * @query   ?page=1&limit=10&sort=-createdAt&status=delivered&totalPrice[gte]=100
  */
 export const getOrderHistory = catchAsync(
   async (req: AuthRequest, res: Response) => {
     if (!req.user) {
-      return res.status(404).json({ message: "User not found" });
+      return res.status(401).json({ message: "Authentication required" });
     }
 
-    const user = await User.findById(req.user._id).populate({
-      path: "orderHistory.order",
-      select:
-        "orderItems shippingAddress paymentMethod totalPrice isPaid paidAt isDelivered deliveredAt",
-    });
+    const user = await User.findById(req.user._id).select("orderHistory");
 
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
 
+    // Filter out orders where order no longer exists and get order IDs
+    const validOrderIds = [];
+    const validOrderHistory = [];
+
+    for (const orderRef of user.orderHistory) {
+      if (orderRef.order) {
+        validOrderIds.push(orderRef.order);
+        validOrderHistory.push(orderRef);
+      }
+    }
+
+    // Update user if some orders were invalid
+    if (validOrderHistory.length !== user.orderHistory.length) {
+      user.orderHistory = validOrderHistory;
+      await user.save();
+    }
+
+    if (validOrderIds.length === 0) {
+      return res.status(200).json({
+        status: "success",
+        results: 0,
+        page: 1,
+        pages: 0,
+        total: 0,
+        data: {
+          orderHistory: [],
+        },
+      });
+    }
+
+    // Create base query for orders in history
+    const baseQuery = Order.find({ _id: { $in: validOrderIds } });
+
+    // Apply API features
+    const features = new APIFeatures(baseQuery, req.query)
+      .filter()
+      .sort()
+      .limitFields()
+      .paginate();
+
+    // Execute query
+    const orders = await features.query.select(
+      "orderItems shippingAddress paymentMethod totalPrice isPaid paidAt isDelivered deliveredAt status createdAt"
+    );
+
+    // Get total count for pagination (without pagination applied)
+    const totalFeatures = new APIFeatures(
+      Order.find({ _id: { $in: validOrderIds } }),
+      req.query
+    ).filter();
+    const total = await Order.countDocuments(totalFeatures.query.getFilter());
+
+    const page = Number(req.query.page?.toString() || "1");
+    const limit = Number(req.query.limit?.toString() || "10");
+
     res.status(200).json({
       status: "success",
-      results: user.orderHistory.length,
+      results: orders.length,
+      page,
+      pages: Math.ceil(total / limit),
+      total,
       data: {
-        orderHistory: user.orderHistory,
+        orderHistory: orders,
+      },
+    });
+  }
+);
+
+/**
+ * @desc    Move item from cart to favorites
+ * @route   POST /api/users/cart/move-to-favorites/:productId
+ * @access  Private
+ */
+export const moveToFavorites = catchAsync(
+  async (req: AuthRequest, res: Response) => {
+    if (!req.user) {
+      return res.status(401).json({ message: "Authentication required" });
+    }
+
+    const user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const { productId } = req.params;
+    const { variationSku } = req.query;
+
+    // Find product in cart
+    const cartItemIndex = user.cart.findIndex((item: any) => {
+      const sameProduct = item.product.toString() === productId;
+      if (!variationSku) return sameProduct;
+      return sameProduct && item.variation?.sku === variationSku;
+    });
+
+    if (cartItemIndex === -1) {
+      return res.status(404).json({ message: "Product not found in cart" });
+    }
+
+    // Check if already in favorites
+    const existingFavorite = user.favorites.find(
+      (item) => item.product.toString() === productId
+    );
+
+    if (!existingFavorite) {
+      // Add to favorites
+      user.favorites.push({
+        product: productId,
+        addedAt: new Date(),
+      });
+    }
+
+    // Remove from cart
+    user.cart.splice(cartItemIndex, 1);
+
+    await user.save();
+
+    res.status(200).json({
+      status: "success",
+      message: "Item moved to favorites successfully",
+      data: {
+        cart: user.cart,
+        favorites: user.favorites,
+        cartCount: user.cart.reduce((total, item) => total + item.quantity, 0),
+        favoritesCount: user.favorites.length,
       },
     });
   }

@@ -196,9 +196,13 @@ orderSchema.pre("save", async function (next) {
     const year = date.getFullYear().toString().substr(-2);
     const month = (date.getMonth() + 1).toString().padStart(2, "0");
     const day = date.getDate().toString().padStart(2, "0");
-    const randomPart = Math.floor(100000 + Math.random() * 900000).toString();
+    // Take the last 6 characters of the unique _id
+    const uniquePart = (this._id as mongoose.Types.ObjectId)
+      .toString()
+      .slice(-6)
+      .toUpperCase();
 
-    this.orderNumber = `ORD-${year}${month}${day}-${randomPart}`;
+    this.orderNumber = `ORD-${year}${month}${day}-${uniquePart}`;
 
     // Initialize status history with current status
     this.statusHistory = [

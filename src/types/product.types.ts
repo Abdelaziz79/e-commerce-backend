@@ -9,7 +9,7 @@ export interface ProductVariation {
   sku: string;
   price: number;
   countInStock: number;
-  _id?: string; // Added to match model
+  _id?: string;
 }
 
 export interface ProductDimension {
@@ -20,7 +20,7 @@ export interface ProductDimension {
 }
 
 export interface ProductReview {
-  _id?: string; // Added to match model
+  _id?: string;
   user: string;
   name: string;
   rating: number;
@@ -28,7 +28,7 @@ export interface ProductReview {
   title?: string;
   images?: string[];
   isVerifiedPurchase: boolean;
-  helpfulVotes: number; // Made required to match model default
+  helpfulVotes: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -37,16 +37,16 @@ export interface ProductDocument extends Document {
   name: string;
   slug: string;
   description: string;
-  richDescription?: string; // HTML or markdown content
+  richDescription?: string;
   price: number;
   category: string;
   subcategories?: string[];
   brand: string;
-  images: string[]; // Array of image URLs or relative paths
-  mainImage: string; // Primary image for listings
+  images: string[];
+  mainImage: string;
   countInStock: number;
   hasVariations: boolean;
-  variations: ProductVariation[]; // Made required to match model
+  variations: ProductVariation[];
   rating: number;
   numReviews: number;
   reviews: ProductReview[];
@@ -55,13 +55,13 @@ export interface ProductDocument extends Document {
   onSale: boolean;
   salePrice?: number;
   saleEndDate?: Date;
-  tags: string[]; // Made required to match model default
+  tags: string[];
   weight?: number;
-  weightUnit: string; // Made required to match model default
+  weightUnit: string;
   dimensions?: ProductDimension;
-  relatedProducts: string[]; // Made required to match model - Array of related product IDs
+  relatedProducts: string[]; // Fixed: Changed from ObjectId references to string array to match usage
   warranty?: string;
-  attributes: Map<string, string>; // Made required to match model - Dynamic product attributes
+  attributes?: Map<string, string>; // Fixed: Made optional to match model
   createdAt: Date;
   updatedAt: Date;
 }

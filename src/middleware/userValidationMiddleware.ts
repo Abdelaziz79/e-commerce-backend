@@ -1,9 +1,7 @@
-import { body, param } from "express-validator";
+import { body, param, query } from "express-validator";
+import mongoose from "mongoose";
 
 // User validation
-export const validateFavoriteItem = [
-  body("productId").isMongoId().withMessage("Invalid product ID"),
-];
 
 export const validateForgotPassword = [
   body("email")
@@ -195,20 +193,12 @@ export const validateUpdateAddress = [
 
 // Cart item validation - Updated for consistency
 export const validateCartItem = [
-  body("productId").isMongoId().withMessage("Invalid product ID"),
-
-  body("name")
-    .optional()
-    .isLength({ min: 1, max: 100 })
-    .withMessage("Product name must be between 1 and 100 characters"),
-
-  body("price")
-    .optional()
-    .isNumeric()
-    .withMessage("Price must be a number")
-    .custom((value) => {
-      if (value < 0) {
-        throw new Error("Price cannot be negative");
+  body("productId")
+    .isMongoId()
+    .withMessage("Invalid product ID")
+    .custom(async (value) => {
+      if (!mongoose.Types.ObjectId.isValid(value)) {
+        throw new Error("Invalid product ID format");
       }
       return true;
     }),
@@ -216,17 +206,106 @@ export const validateCartItem = [
   body("quantity")
     .optional()
     .isInt({ min: 1, max: 999 })
-    .withMessage("Quantity must be between 1 and 999"),
+    .withMessage("Quantity must be between 1 and 999")
+    .toInt(),
 
-  body("image")
+  body("variation")
     .optional()
-    .custom((value) => {
-      // Accept both URLs and relative paths
-      if (value.startsWith("http") || value.startsWith("https")) {
-        return /^https?:\/\/.*\.(jpg|jpeg|png|gif|webp)$/i.test(value);
+    .isObject()
+    .withMessage("Variation must be an object"),
+
+  body("variation.size")
+    .optional()
+    .isString()
+    .trim()
+    .isLength({ min: 1, max: 50 })
+    .withMessage("Size must be between 1 and 50 characters"),
+
+  body("variation.color")
+    .optional()
+    .isString()
+    .trim()
+    .isLength({ min: 1, max: 50 })
+    .withMessage("Color must be between 1 and 50 characters"),
+
+  body("variation.material")
+    .optional()
+    .isString()
+    .trim()
+    .isLength({ min: 1, max: 50 })
+    .withMessage("Material must be between 1 and 50 characters"),
+
+  body("variation.style")
+    .optional()
+    .isString()
+    .trim()
+    .isLength({ min: 1, max: 50 })
+    .withMessage("Style must be between 1 and 50 characters"),
+
+  body("variation.sku")
+    .if(body("variation").exists())
+    .notEmpty()
+    .withMessage("SKU is required when variation is provided")
+    .isString()
+    .trim()
+    .isLength({ min: 1, max: 100 })
+    .withMessage("SKU must be between 1 and 100 characters"),
+];
+
+// Cart update validation
+export const validateCartUpdate = [
+  param("productId").isMongoId().withMessage("Invalid product ID"),
+
+  body("quantity")
+    .isInt({ min: 0, max: 999 })
+    .withMessage("Quantity must be between 0 and 999")
+    .toInt(),
+
+  body("variationSku")
+    .optional()
+    .isString()
+    .trim()
+    .isLength({ min: 1, max: 100 })
+    .withMessage("Variation SKU must be between 1 and 100 characters"),
+];
+
+// Favorite item validation
+export const validateFavoriteItem = [
+  body("productId")
+    .isMongoId()
+    .withMessage("Invalid product ID")
+    .custom(async (value) => {
+      if (!mongoose.Types.ObjectId.isValid(value)) {
+        throw new Error("Invalid product ID format");
       }
-      // Accept relative paths starting with /
-      return /^\/.*\.(jpg|jpeg|png|gif|webp)$/i.test(value);
-    })
-    .withMessage("Image must be a valid URL or relative path"),
+      return true;
+    }),
+];
+
+// Pagination validation
+export const validatePagination = [
+  query("page")
+    .optional()
+    .isInt({ min: 1, max: 1000 })
+    .withMessage("Page must be between 1 and 1000")
+    .toInt(),
+
+  query("limit")
+    .optional()
+    .isInt({ min: 1, max: 100 })
+    .withMessage("Limit must be between 1 and 100")
+    .toInt(),
+];
+
+// Product ID parameter validation
+export const validateProductId = [
+  param("productId")
+    .isMongoId()
+    .withMessage("Invalid product ID")
+    .custom(async (value) => {
+      if (!mongoose.Types.ObjectId.isValid(value)) {
+        throw new Error("Invalid product ID format");
+      }
+      return true;
+    }),
 ];

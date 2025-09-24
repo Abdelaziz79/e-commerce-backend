@@ -205,31 +205,31 @@ userSchema.methods.comparePassword = async function (
 
 // Create password reset token
 userSchema.methods.createPasswordResetToken = function (): string {
-  const resetToken = crypto.randomBytes(32).toString('hex');
-  
+  const resetToken = crypto.randomBytes(32).toString("hex");
+
   this.passwordResetToken = crypto
-    .createHash('sha256')
+    .createHash("sha256")
     .update(resetToken)
-    .digest('hex');
-    
+    .digest("hex");
+
   // Token expires in 10 minutes
   this.passwordResetExpires = new Date(Date.now() + 10 * 60 * 1000);
-  
+
   return resetToken;
 };
 
 // Create email verification token
 userSchema.methods.createEmailVerificationToken = function (): string {
-  const verificationToken = crypto.randomBytes(32).toString('hex');
-  
+  const verificationToken = crypto.randomBytes(32).toString("hex");
+
   this.emailVerificationToken = crypto
-    .createHash('sha256')
+    .createHash("sha256")
     .update(verificationToken)
-    .digest('hex');
-    
+    .digest("hex");
+
   // Token expires in 24 hours
   this.emailVerificationExpires = new Date(Date.now() + 24 * 60 * 60 * 1000);
-  
+
   return verificationToken;
 };
 

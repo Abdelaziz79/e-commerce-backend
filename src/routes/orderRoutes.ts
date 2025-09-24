@@ -1,56 +1,121 @@
 import express from "express";
 import {
-  createOrder,
-  getOrderById,
-  updateOrderToPaid,
-  updateOrderToDelivered,
-  getMyOrders,
-  getOrders,
-  updateOrderStatus,
   addTrackingInfo,
   cancelOrder,
+  // Order management
+  createOrder,
+  exportOrders,
+  getMyOrders,
+  getOrderAnalytics,
+  getOrderById,
+  getOrders,
+  getUserOrderStats,
+  searchOrders,
+  updateOrderStatus,
+  updateOrderToDelivered,
+  updateOrderToPaid,
 } from "../controllers/orderController";
-import { protect, admin } from "../middleware/authMiddleware";
+import { admin, protect } from "../middleware/authMiddleware";
 import { handleValidationErrors } from "../middleware/errorMiddleware";
 import {
+  validateAddTrackingInfo,
+  validateCancelOrder,
   validateCreateOrder,
-  validateUpdateOrderToPaid,
+  validatePagination,
   validateUpdateOrderStatus,
-  validateMongoId,
+  validateUpdateToPaid,
 } from "../middleware/orderValidationMiddleware";
+import {
+  generalRateLimiters,
+  orderRateLimiters,
+} from "../middleware/rateLimit";
 
-const router = express.Router();
+const orderRouter = express.Router();
 
-// Protected routes
-router
+// Apply general rate limiting to all order routes
+orderRouter.use(generalRateLimiters.api);
+
+// User order routes
+orderRouter
+  .route("/myorders")
+  .get(protect, validatePagination, handleValidationErrors, getMyOrders);
+
+orderRouter.route("/user-stats").get(protect, getUserOrderStats);
+
+// Main order routes
+orderRouter
   .route("/")
-  .post(protect, validateCreateOrder, handleValidationErrors, createOrder)
-  .get(protect, admin, getOrders);
-router.route("/myorders").get(protect, getMyOrders);
-router.route("/:id").get(protect, getOrderById);
-router
+  .post(
+    protect,
+    orderRateLimiters.creation,
+    validateCreateOrder,
+    handleValidationErrors,
+    createOrder
+  )
+  .get(protect, admin, validatePagination, handleValidationErrors, getOrders);
+
+// Admin search and analytics routes
+orderRouter.route("/search").get(protect, admin, searchOrders);
+
+orderRouter.route("/analytics").get(protect, admin, getOrderAnalytics);
+
+orderRouter.route("/export").get(protect, admin, exportOrders);
+
+// Individual order routes
+orderRouter.route("/:id").get(protect, getOrderById);
+
+// Payment update with specific rate limiting
+orderRouter
   .route("/:id/pay")
   .put(
     protect,
-    validateUpdateOrderToPaid,
+    orderRateLimiters.payment,
+    validateUpdateToPaid,
     handleValidationErrors,
     updateOrderToPaid
   );
-router.route("/:id/deliver").put(protect, admin, updateOrderToDelivered);
-router
+
+// Admin order management routes with rate limiting
+orderRouter
   .route("/:id/status")
   .put(
     protect,
     admin,
+    orderRateLimiters.adminOperations,
     validateUpdateOrderStatus,
     handleValidationErrors,
     updateOrderStatus
   );
-router
-  .route("/:id/tracking")
-  .put(protect, admin, validateMongoId, handleValidationErrors, addTrackingInfo);
-router
-  .route("/:id/cancel")
-  .put(protect, validateMongoId, handleValidationErrors, cancelOrder);
 
-export default router;
+orderRouter
+  .route("/:id/deliver")
+  .put(
+    protect,
+    admin,
+    orderRateLimiters.adminOperations,
+    updateOrderToDelivered
+  );
+
+orderRouter
+  .route("/:id/tracking")
+  .put(
+    protect,
+    admin,
+    orderRateLimiters.adminOperations,
+    validateAddTrackingInfo,
+    handleValidationErrors,
+    addTrackingInfo
+  );
+
+// Order cancellation with specific rate limiting
+orderRouter
+  .route("/:id/cancel")
+  .put(
+    protect,
+    orderRateLimiters.cancel,
+    validateCancelOrder,
+    handleValidationErrors,
+    cancelOrder
+  );
+
+export default orderRouter;

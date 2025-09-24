@@ -8,11 +8,15 @@ import {
   addUserAddress,
   clearCart,
   deleteUserAddress,
+  getCart,
   getFavorites,
   // Order history
   getOrderHistory,
+  // User profile
   getUserProfile,
+  // Admin
   getUsers,
+  moveToFavorites,
   removeFromCart,
   removeFromFavorites,
   updateCartItem,
@@ -23,42 +27,54 @@ import {
 import { admin, protect } from "../middleware/authMiddleware";
 import { handleValidationErrors } from "../middleware/errorMiddleware";
 import {
+  ecommerceRateLimiters,
+  generalRateLimiters,
+  userRateLimiters,
+} from "../middleware/rateLimit";
+import {
   validateAddAddress,
   validateCartItem,
+  validateCartUpdate,
   validateFavoriteItem,
+  validatePagination,
   validateUpdateAddress,
   validateUpdatePassword,
   validateUpdateProfile,
 } from "../middleware/userValidationMiddleware";
 
-const router = express.Router();
+const userRouter = express.Router();
 
-// Protected routes
-router
+// Apply general rate limiting to all user routes
+userRouter.use(generalRateLimiters.api);
+
+// Profile management with specific rate limiting
+userRouter
   .route("/profile")
   .get(protect, getUserProfile)
   .put(
     protect,
+    userRateLimiters.profileUpdate,
     validateUpdateProfile,
     handleValidationErrors,
     updateUserProfile
   );
 
-// update user password
-router.put(
+// Password update with strict rate limiting
+userRouter.put(
   "/update-password",
   protect,
+  userRateLimiters.passwordChange,
   validateUpdatePassword,
   handleValidationErrors,
   updateUserPassword
 );
 
 // Address routes
-router
+userRouter
   .route("/address")
   .post(protect, validateAddAddress, handleValidationErrors, addUserAddress);
 
-router
+userRouter
   .route("/address/:addressId")
   .put(
     protect,
@@ -68,29 +84,56 @@ router
   )
   .delete(protect, deleteUserAddress);
 
-// Cart routes
-router
+// Cart routes with specific rate limiting
+userRouter
   .route("/cart")
-  .post(protect, validateCartItem, handleValidationErrors, addToCart)
-  .delete(protect, clearCart);
+  .get(protect, getCart)
+  .post(
+    protect,
+    ecommerceRateLimiters.cart,
+    validateCartItem,
+    handleValidationErrors,
+    addToCart
+  )
+  .delete(protect, ecommerceRateLimiters.cart, clearCart);
 
-router
+userRouter
   .route("/cart/:productId")
-  .put(protect, updateCartItem)
-  .delete(protect, removeFromCart);
+  .put(
+    protect,
+    ecommerceRateLimiters.cart,
+    validateCartUpdate,
+    handleValidationErrors,
+    updateCartItem
+  )
+  .delete(protect, ecommerceRateLimiters.cart, removeFromCart);
 
-// Favorites routes
-router
+userRouter
+  .route("/cart/move-to-favorites/:productId")
+  .post(protect, ecommerceRateLimiters.cart, moveToFavorites);
+
+// Favorites routes with specific rate limiting
+userRouter
   .route("/favorites")
   .get(protect, getFavorites)
-  .post(protect, validateFavoriteItem, handleValidationErrors, addToFavorites);
+  .post(
+    protect,
+    ecommerceRateLimiters.favorites,
+    validateFavoriteItem,
+    handleValidationErrors,
+    addToFavorites
+  );
 
-router.route("/favorites/:productId").delete(protect, removeFromFavorites);
+userRouter
+  .route("/favorites/:productId")
+  .delete(protect, ecommerceRateLimiters.favorites, removeFromFavorites);
 
 // Order history route
-router.route("/orders").get(protect, getOrderHistory);
+userRouter
+  .route("/orders")
+  .get(protect, validatePagination, handleValidationErrors, getOrderHistory);
 
 // Admin routes
-router.route("/").get(protect, admin, getUsers);
+userRouter.route("/").get(protect, admin, getUsers);
 
-export default router;
+export default userRouter;

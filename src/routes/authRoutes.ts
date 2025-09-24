@@ -7,6 +7,7 @@ import {
   verifyEmail,
 } from "../controllers/userController";
 import { handleValidationErrors } from "../middleware/errorMiddleware";
+import { authRateLimiters } from "../middleware/rateLimit";
 import {
   validateForgotPassword,
   validateResetPassword,
@@ -14,30 +15,42 @@ import {
   validateUserRegistration,
 } from "../middleware/userValidationMiddleware";
 
-const router = express.Router();
+const authRouter = express.Router();
 
-// Public routes
-router.post("/login", validateUserLogin, handleValidationErrors, loginUser);
-router.post(
+// Public routes with rate limiting
+authRouter.post(
+  "/login",
+  authRateLimiters.login,
+  validateUserLogin,
+  handleValidationErrors,
+  loginUser
+);
+
+authRouter.post(
   "/register",
+  authRateLimiters.register,
   validateUserRegistration,
   handleValidationErrors,
   registerUser
 );
 
 // Email verification and password reset routes
-router.get("/verify-email/:token", verifyEmail);
-router.post(
+authRouter.get("/verify-email/:token", verifyEmail);
+
+authRouter.post(
   "/forgot-password",
+  authRateLimiters.forgotPassword,
   validateForgotPassword,
   handleValidationErrors,
   forgotPassword
 );
-router.post(
+
+authRouter.post(
   "/reset-password/:token",
+  authRateLimiters.resetPassword,
   validateResetPassword,
   handleValidationErrors,
   resetPassword
 );
 
-export default router;
+export default authRouter;

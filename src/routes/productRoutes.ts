@@ -1,43 +1,56 @@
 import express from "express";
 import {
-  getProducts,
-  getProductById,
   createProduct,
-  updateProduct,
-  deleteProduct,
   createProductReview,
+  deleteProduct,
+  deleteProductReview,
   getFeaturedProducts,
   getOnSaleProducts,
+  getProductById,
   getProductReviews,
+  getProducts,
+  updateProduct,
+  updateProductReview,
 } from "../controllers/productController";
-import { protect, admin } from "../middleware/authMiddleware";
+import { admin, protect } from "../middleware/authMiddleware";
 import { handleValidationErrors } from "../middleware/errorMiddleware";
 import {
   validateCreateProduct,
-  validateUpdateProduct,
   validateCreateReview,
+  validateDeleteReview,
+  validateUpdateProduct,
+  validateUpdateReview,
 } from "../middleware/productValidationMiddleware";
+import {
+  generalRateLimiters,
+  productRateLimiters,
+} from "../middleware/rateLimit";
 
-const router = express.Router();
+const productRouter = express.Router();
+
+// Apply general rate limiting to all product routes
+productRouter.use(generalRateLimiters.api);
 
 // Public routes
-router.route("/").get(getProducts);
-router.route("/featured").get(getFeaturedProducts);
-router.route("/sale").get(getOnSaleProducts);
-router.route("/:id").get(getProductById);
-router.route("/:id/reviews").get(getProductReviews);
+productRouter.route("/").get(getProducts);
+productRouter.route("/featured").get(getFeaturedProducts);
+productRouter.route("/sale").get(getOnSaleProducts);
+productRouter.route("/:id").get(getProductById);
+productRouter.route("/:id/reviews").get(getProductReviews);
 
-// Protected routes
-router
+// Admin product management with rate limiting
+productRouter
   .route("/")
   .post(
     protect,
     admin,
+    productRateLimiters.create,
     validateCreateProduct,
     handleValidationErrors,
     createProduct
   );
-router
+
+productRouter
   .route("/:id")
   .put(
     protect,
@@ -48,13 +61,30 @@ router
   )
   .delete(protect, admin, deleteProduct);
 
-router
+// Product reviews with rate limiting
+productRouter
   .route("/:id/reviews")
   .post(
     protect,
+    productRateLimiters.review,
     validateCreateReview,
     handleValidationErrors,
     createProductReview
   );
 
-export default router;
+productRouter
+  .route("/:id/reviews/:reviewId")
+  .put(
+    protect,
+    validateUpdateReview,
+    handleValidationErrors,
+    updateProductReview
+  )
+  .delete(
+    protect,
+    validateDeleteReview,
+    handleValidationErrors,
+    deleteProductReview
+  );
+
+export default productRouter;

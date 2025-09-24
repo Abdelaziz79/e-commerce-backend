@@ -6,7 +6,8 @@ dotenv.config({});
 const config = {
   env: process.env.NODE_ENV || "development",
   port: process.env.PORT || 5000,
-  mongoUri: process.env.MONGO_URI || "mongodb://localhost:27017/ecommerce",
+  mongoUri:
+    process.env.MONGO_URI || "mongodb://mongodb:27017/ecommerce?replicaSet=rs0",
   jwtSecret: process.env.JWT_SECRET || "your_default_jwt_secret_key",
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || "30d",
   emailUser: process.env.EMAIL_USER || "your_default_email_user",

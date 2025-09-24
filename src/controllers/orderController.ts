@@ -1,11 +1,12 @@
-import { Request, Response } from "express";
-import { validationResult } from "express-validator";
-import Order from "../models/orderModel";
-import { AuthRequest } from "../types/user.types";
-import catchAsync from "../utils/catchAsync";
-import APIFeatures from "../utils/apiFeatures";
+import { Response } from "express";
 import mongoose from "mongoose";
+import Order from "../models/orderModel";
+import Product from "../models/productModel";
+import User from "../models/userModel";
 import { OrderStatus } from "../types/order.types";
+import { AuthRequest } from "../types/user.types";
+import APIFeatures from "../utils/apiFeatures";
+import catchAsync from "../utils/catchAsync";
 
 // Type for populated user field in order
 interface PopulatedUser {
@@ -21,13 +22,12 @@ interface PopulatedUser {
  */
 export const createOrder = catchAsync(
   async (req: AuthRequest, res: Response) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
-    }
-
-    if (!req.user) {
-      return res.status(401).json({ message: "Not authorized" });
+    // 1. Authenticate user
+    if (!req.user?._id) {
+      return res.status(401).json({
+        status: "error",
+        message: "Not authorized",
+      });
     }
 
     const {
@@ -42,48 +42,154 @@ export const createOrder = catchAsync(
       notes,
     } = req.body;
 
-    // Validate required fields
+    // 2. Validate incoming data
     if (!orderItems || orderItems.length === 0) {
-      return res.status(400).json({ message: "No order items" });
+      return res.status(400).json({
+        status: "error",
+        message: "No order items provided",
+      });
     }
 
-    // Calculate subtotal (before tax and shipping)
-    const subtotal = Number(itemsPrice);
+    // 3. Start a database session and transaction
+    const session = await mongoose.startSession();
+    try {
+      // The result of the transaction will be stored in 'createdOrder'
+      const createdOrder = await session.withTransaction(async () => {
+        // --- START OF TRANSACTION LOGIC ---
 
-    // Calculate discount amount if applicable
-    let discountAmount = 0;
-    if (discount) {
-      if (discount.type === "percentage") {
-        discountAmount = (subtotal * discount.value) / 100;
+        const productIds = orderItems.map((item: any) => item.product);
+        const products = await Product.find({ _id: { $in: productIds } })
+          .session(session)
+          .lean();
+        const productMap = new Map(products.map((p) => [p._id.toString(), p]));
+
+        // Validate each item and prepare for stock update
+        for (const item of orderItems) {
+          const product = productMap.get(item.product);
+          if (!product) {
+            throw new Error(`Product "${item.name}" not found`);
+          }
+
+          let expectedPrice = product.price;
+          let availableStock = product.countInStock;
+
+          if (product.hasVariations && item.variation?.sku) {
+            const variation = product.variations?.find(
+              (v) => v.sku === item.variation.sku
+            );
+            if (!variation) {
+              throw new Error(
+                `Variation with SKU "${item.variation.sku}" not found for "${item.name}"`
+              );
+            }
+            expectedPrice = variation.price;
+            availableStock = variation.countInStock;
+          }
+
+          if (availableStock < item.quantity) {
+            throw new Error(
+              `Insufficient stock for "${item.name}". Available: ${availableStock}, Requested: ${item.quantity}`
+            );
+          }
+          if (Math.abs(expectedPrice - item.price) > 0.01) {
+            throw new Error(
+              `Price mismatch for "${item.name}". Expected: ${expectedPrice}, Provided: ${item.price}`
+            );
+          }
+        }
+
+        // Update stock for all products
+        for (const item of orderItems) {
+          if (item.variation?.sku) {
+            await Product.updateOne(
+              { _id: item.product, "variations.sku": item.variation.sku },
+              { $inc: { "variations.$.countInStock": -item.quantity } },
+              { session }
+            );
+          } else {
+            await Product.updateOne(
+              { _id: item.product },
+              { $inc: { countInStock: -item.quantity } },
+              { session }
+            );
+          }
+        }
+
+        // Generate a unique order number
+        const date = new Date();
+        const year = date.getFullYear().toString().substr(-2);
+        const month = (date.getMonth() + 1).toString().padStart(2, "0");
+        const day = date.getDate().toString().padStart(2, "0");
+        const randomPart = Math.floor(
+          100000 + Math.random() * 900000
+        ).toString();
+        const orderNumber = `ORD-${year}${month}${day}-${randomPart}`;
+
+        // Create the new order
+        const order = new Order({
+          orderNumber,
+          orderItems,
+          user: req.user!._id,
+          shippingAddress,
+          paymentMethod,
+          itemsPrice,
+          taxPrice,
+          shippingPrice,
+          totalPrice,
+          discount,
+          notes,
+          status: "pending",
+          statusHistory: [
+            { status: "pending", date: new Date(), note: "Order created" },
+          ],
+        });
+
+        const newOrder = await order.save({ session });
+
+        // Update user's order history
+        await User.findByIdAndUpdate(
+          req.user!._id,
+          {
+            $push: {
+              orderHistory: {
+                order: newOrder._id,
+                totalPrice: newOrder.totalPrice,
+                status: newOrder.status,
+                createdAt: newOrder.createdAt,
+              },
+            },
+          },
+          { session }
+        );
+
+        return newOrder; // This is returned by session.withTransaction
+        // --- END OF TRANSACTION LOGIC ---
+      });
+
+      // If the transaction was successful, 'createdOrder' will be defined
+      if (createdOrder) {
+        // Populate user details for the response outside the transaction
+        await createdOrder.populate("user", "name email");
+
+        res.status(201).json({
+          status: "success",
+          message: "Order created successfully",
+          data: { order: createdOrder },
+        });
       } else {
-        discountAmount = discount.value;
+        // This case should ideally not be reached if an error isn't thrown
+        throw new Error("Order creation failed after transaction.");
       }
-      // Ensure discount doesn't exceed order value
-      discountAmount = Math.min(discountAmount, subtotal);
+    } catch (error: any) {
+      // The catch block handles any error thrown inside the transaction
+      return res.status(400).json({
+        status: "error",
+        message: error.message || "Failed to create order",
+      });
+    } finally {
+      // 4. End the session
+      await session.endSession();
     }
-
-    // Create order
-    const order = new Order({
-      orderItems,
-      user: req.user._id,
-      shippingAddress,
-      paymentMethod,
-      itemsPrice,
-      taxPrice,
-      shippingPrice,
-      totalPrice,
-      subtotal,
-      discount,
-      discountAmount,
-      notes,
-      status: "pending" as OrderStatus,
-    });
-
-    const createdOrder = await order.save();
-    res.status(201).json({
-      status: "success",
-      data: createdOrder,
-    });
   }
 );
 
@@ -94,7 +200,7 @@ export const createOrder = catchAsync(
  */
 export const getOrderById = catchAsync(
   async (req: AuthRequest, res: Response) => {
-    if (!req.user) {
+    if (!req.user?._id) {
       return res.status(401).json({ message: "Not authorized" });
     }
 
@@ -142,7 +248,7 @@ export const getOrderById = catchAsync(
  */
 export const updateOrderToPaid = catchAsync(
   async (req: AuthRequest, res: Response) => {
-    if (!req.user) {
+    if (!req.user?._id) {
       return res.status(401).json({ message: "Not authorized" });
     }
 
@@ -190,7 +296,7 @@ export const updateOrderToPaid = catchAsync(
  */
 export const updateOrderStatus = catchAsync(
   async (req: AuthRequest, res: Response) => {
-    if (!req.user || req.user.role !== "admin") {
+    if (!req.user?._id || req.user.role !== "admin") {
       return res.status(401).json({ message: "Not authorized" });
     }
 
@@ -277,7 +383,7 @@ export const updateOrderStatus = catchAsync(
  */
 export const updateOrderToDelivered = catchAsync(
   async (req: AuthRequest, res: Response) => {
-    if (!req.user || req.user.role !== "admin") {
+    if (!req.user?._id || req.user.role !== "admin") {
       return res.status(401).json({ message: "Not authorized" });
     }
 
@@ -315,7 +421,7 @@ export const updateOrderToDelivered = catchAsync(
  */
 export const getMyOrders = catchAsync(
   async (req: AuthRequest, res: Response) => {
-    if (!req.user) {
+    if (!req.user?._id) {
       return res.status(401).json({ message: "Not authorized" });
     }
 
@@ -346,7 +452,7 @@ export const getMyOrders = catchAsync(
  * @access  Private/Admin
  */
 export const getOrders = catchAsync(async (req: AuthRequest, res: Response) => {
-  if (!req.user || req.user.role !== "admin") {
+  if (!req.user?._id || req.user.role !== "admin") {
     return res.status(401).json({ message: "Not authorized" });
   }
 
@@ -382,7 +488,7 @@ export const getOrders = catchAsync(async (req: AuthRequest, res: Response) => {
  */
 export const addTrackingInfo = catchAsync(
   async (req: AuthRequest, res: Response) => {
-    if (!req.user || req.user.role !== "admin") {
+    if (!req.user?._id || req.user.role !== "admin") {
       return res.status(401).json({ message: "Not authorized" });
     }
 
@@ -432,56 +538,306 @@ export const addTrackingInfo = catchAsync(
  */
 export const cancelOrder = catchAsync(
   async (req: AuthRequest, res: Response) => {
-    if (!req.user) {
+    // 1. Authenticate user
+    if (!req.user?._id) {
       return res.status(401).json({ message: "Not authorized" });
     }
 
-    const order = await Order.findById(req.params.id);
+    // 2. Start a database session
+    const session = await mongoose.startSession();
 
-    if (!order) {
-      return res.status(404).json({ message: "Order not found" });
-    }
+    try {
+      // 3. Execute logic within a transaction
+      const updatedOrder = await session.withTransaction(async () => {
+        // --- START OF TRANSACTION LOGIC ---
+        const order = await Order.findById(req.params.id).session(session);
 
-    // Verify owner or admin
-    // Get the user ID string from the order.user (could be ObjectId or string)
-    let orderUserId: string;
+        if (!order) {
+          throw new Error("Order not found");
+        }
 
-    // Ensure we can safely call toString()
-    if (order.user) {
-      orderUserId = order.user.toString();
-    } else {
-      // Fallback if user is somehow undefined
-      orderUserId = "";
-    }
+        // Verify user is the owner or an admin
+        const orderUserId = order.user.toString();
+        if (
+          orderUserId !== req.user!._id.toString() &&
+          req.user!.role !== "admin"
+        ) {
+          throw new Error("Not authorized to cancel this order");
+        }
 
-    if (orderUserId !== req.user._id.toString() && req.user.role !== "admin") {
-      return res
-        .status(403)
-        .json({ message: "Not authorized to cancel this order" });
-    }
+        // Check if the order is in a cancellable state
+        if (!["pending", "processing"].includes(order.status)) {
+          throw new Error(
+            "Cannot cancel order. It has already been shipped or completed."
+          );
+        }
 
-    // Only allow cancellation of pending or processing orders
-    if (!["pending", "processing"].includes(order.status)) {
-      return res.status(400).json({
-        message: "Cannot cancel order. Order is already shipped or processed",
+        // Restore inventory for each item in the order
+        for (const item of order.orderItems) {
+          if (item.variation?.sku) {
+            // Restore variation stock
+            await Product.updateOne(
+              { _id: item.product, "variations.sku": item.variation.sku },
+              { $inc: { "variations.$.countInStock": item.quantity } },
+              { session }
+            );
+          } else {
+            // Restore main product stock
+            await Product.updateOne(
+              { _id: item.product },
+              { $inc: { countInStock: item.quantity } },
+              { session }
+            );
+          }
+        }
+
+        // Update the order status
+        order.status = "cancelled";
+        order.statusHistory.push({
+          status: "cancelled",
+          date: new Date(),
+          note: req.body.reason || "Cancelled by user",
+        });
+
+        await order.save({ session });
+        return order; // This is returned by session.withTransaction
+        // --- END OF TRANSACTION LOGIC ---
       });
+
+      res.status(200).json({
+        status: "success",
+        data: updatedOrder,
+      });
+    } catch (error: any) {
+      // The catch block handles any error thrown inside the transaction
+      return res.status(400).json({
+        status: "error",
+        message: error.message || "Failed to cancel order",
+      });
+    } finally {
+      // 4. End the session
+      await session.endSession();
+    }
+  }
+);
+
+/**
+ * @desc    Search orders by order number, address, city
+ * @route   GET /api/orders/search
+ * @access  Private/Admin
+ */
+export const searchOrders = catchAsync(
+  async (req: AuthRequest, res: Response) => {
+    if (!req.user?._id || req.user.role !== "admin") {
+      return res.status(401).json({ message: "Not authorized" });
     }
 
-    // Update order
-    order.status = "cancelled";
+    const { q } = req.query;
 
-    // Add to status history
-    order.statusHistory.push({
-      status: "cancelled",
-      date: new Date(),
-      note: req.body.reason || "Cancelled by customer",
-    });
+    if (!q || typeof q !== "string") {
+      return res.status(400).json({ message: "Search query required" });
+    }
 
-    const updatedOrder = await order.save();
+    const searchQuery = {
+      $or: [
+        { orderNumber: { $regex: q, $options: "i" } },
+        { "shippingAddress.address": { $regex: q, $options: "i" } },
+        { "shippingAddress.city": { $regex: q, $options: "i" } },
+        { "orderItems.name": { $regex: q, $options: "i" } },
+      ],
+    };
+
+    const orders = await Order.find(searchQuery)
+      .populate("user", "name email")
+      .sort({ createdAt: -1 })
+      .limit(20);
 
     res.status(200).json({
       status: "success",
-      data: updatedOrder,
+      results: orders.length,
+      data: orders,
+    });
+  }
+);
+
+/**
+ * @desc    Get order analytics for admin dashboard
+ * @route   GET /api/orders/analytics
+ * @access  Private/Admin
+ */
+export const getOrderAnalytics = catchAsync(
+  async (req: AuthRequest, res: Response) => {
+    if (!req.user?._id || req.user.role !== "admin") {
+      return res.status(401).json({ message: "Not authorized" });
+    }
+
+    const [statusCounts, monthlyRevenue, recentOrders, totalRevenue] =
+      await Promise.all([
+        // Order status distribution
+        Order.aggregate([{ $group: { _id: "$status", count: { $sum: 1 } } }]),
+
+        // Monthly revenue for last 12 months
+        Order.aggregate([
+          {
+            $match: {
+              isPaid: true,
+              createdAt: {
+                $gte: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000),
+              },
+            },
+          },
+          {
+            $group: {
+              _id: {
+                year: { $year: "$createdAt" },
+                month: { $month: "$createdAt" },
+              },
+              revenue: { $sum: "$totalPrice" },
+              orders: { $sum: 1 },
+            },
+          },
+          { $sort: { "_id.year": -1, "_id.month": -1 } },
+        ]),
+
+        // Recent orders count (last 24 hours)
+        Order.countDocuments({
+          createdAt: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+        }),
+
+        // Total revenue
+        Order.aggregate([
+          { $match: { isPaid: true } },
+          { $group: { _id: null, total: { $sum: "$totalPrice" } } },
+        ]),
+      ]);
+
+    res.status(200).json({
+      status: "success",
+      data: {
+        statusCounts,
+        monthlyRevenue,
+        recentOrdersCount: recentOrders,
+        totalRevenue: totalRevenue[0]?.total || 0,
+      },
+    });
+  }
+);
+
+/**
+ * @desc    Export orders for reporting
+ * @route   GET /api/orders/export
+ * @access  Private/Admin
+ */
+export const exportOrders = catchAsync(
+  async (req: AuthRequest, res: Response) => {
+    if (!req.user?._id || req.user.role !== "admin") {
+      return res.status(401).json({ message: "Not authorized" });
+    }
+
+    const { startDate, endDate, status } = req.query;
+
+    const query: any = {};
+    if (startDate) query.createdAt = { $gte: new Date(startDate as string) };
+    if (endDate)
+      query.createdAt = {
+        ...query.createdAt,
+        $lte: new Date(endDate as string),
+      };
+    if (status) query.status = status;
+
+    const orders = await Order.find(query)
+      .populate("user", "name email")
+      .sort({ createdAt: -1 });
+
+    // Format for CSV export
+    const csvData = orders.map((order) => ({
+      orderNumber: order.orderNumber,
+      customerName: (order.user as any)?.name,
+      customerEmail: (order.user as any)?.email,
+      status: order.status,
+      itemsPrice: order.itemsPrice,
+      taxPrice: order.taxPrice,
+      shippingPrice: order.shippingPrice,
+      totalPrice: order.totalPrice,
+      isPaid: order.isPaid,
+      isDelivered: order.isDelivered,
+      createdAt: order.createdAt.toISOString(),
+      paidAt: order.paidAt?.toISOString() || "",
+      deliveredAt: order.deliveredAt?.toISOString() || "",
+      shippingAddress: `${order.shippingAddress.address}, ${order.shippingAddress.city}, ${order.shippingAddress.postalCode}, ${order.shippingAddress.country}`,
+      paymentMethod: order.paymentMethod,
+      trackingNumber: order.shipping?.trackingNumber || "",
+      carrier: order.shipping?.carrier || "",
+    }));
+
+    res.status(200).json({
+      status: "success",
+      count: csvData.length,
+      data: csvData,
+    });
+  }
+);
+
+/**
+ * @desc    Get order statistics for a specific user
+ * @route   GET /api/orders/user-stats
+ * @access  Private
+ */
+export const getUserOrderStats = catchAsync(
+  async (req: AuthRequest, res: Response) => {
+    if (!req.user?._id) {
+      return res.status(401).json({ message: "Not authorized" });
+    }
+
+    const userId = req.user._id;
+
+    const [orderStats, recentOrders] = await Promise.all([
+      Order.aggregate([
+        { $match: { user: new mongoose.Types.ObjectId(userId) } },
+        {
+          $group: {
+            _id: null,
+            totalOrders: { $sum: 1 },
+            totalSpent: { $sum: "$totalPrice" },
+            averageOrderValue: { $avg: "$totalPrice" },
+            statusBreakdown: {
+              $push: "$status",
+            },
+          },
+        },
+      ]),
+
+      Order.find({ user: userId })
+        .sort({ createdAt: -1 })
+        .limit(5)
+        .select("orderNumber status totalPrice createdAt"),
+    ]);
+
+    const stats = orderStats[0] || {
+      totalOrders: 0,
+      totalSpent: 0,
+      averageOrderValue: 0,
+      statusBreakdown: [],
+    };
+
+    // Count status occurrences
+    const statusCounts = stats.statusBreakdown.reduce(
+      (acc: any, status: string) => {
+        acc[status] = (acc[status] || 0) + 1;
+        return acc;
+      },
+      {}
+    );
+
+    res.status(200).json({
+      status: "success",
+      data: {
+        totalOrders: stats.totalOrders,
+        totalSpent: stats.totalSpent,
+        averageOrderValue: stats.averageOrderValue,
+        statusCounts,
+        recentOrders,
+      },
     });
   }
 );
