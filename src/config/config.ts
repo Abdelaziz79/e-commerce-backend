@@ -14,6 +14,7 @@ const config = {
   emailPass: process.env.EMAIL_PASS || "your_default_email_password",
   emailFrom: process.env.EMAIL_FROM || "E-Commerce App",
   baseUrl: process.env.BASE_URL || "http://localhost:5000",
+  frontendBaseUrl: process.env.FRONTEND_BASE_URL || "http://localhost:3000",
 };
 
 export default config;

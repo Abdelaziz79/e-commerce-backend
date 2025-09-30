@@ -11,6 +11,7 @@ import {
 } from "../utils/emailService";
 import generateToken from "../utils/generateToken";
 import Order from "../models/orderModel";
+import config from "../config/config";
 
 /**
  * @desc    Auth user & get token
@@ -75,9 +76,7 @@ export const registerUser = catchAsync(async (req: Request, res: Response) => {
   await user.save({ validateBeforeSave: false });
 
   // Create verification URL
-  const verificationURL = `${req.protocol}://${req.get(
-    "host"
-  )}/api/v1/users/verify-email/${verificationToken}`;
+  const verificationURL = `${config.frontendBaseUrl}/verify-email/${verificationToken}`;
 
   try {
     // Send verification email
@@ -1097,9 +1096,7 @@ export const forgotPassword = catchAsync(
     await user.save({ validateBeforeSave: false });
 
     // Create reset URL
-    const resetURL = `${req.protocol}://${req.get(
-      "host"
-    )}/api/v1/users/reset-password/${resetToken}`;
+    const resetURL = `${config.frontendBaseUrl}/reset-password/${resetToken}`;
 
     // In a production environment, you would send an email with the reset URL
     // For this implementation, we'll just return the token in the response
