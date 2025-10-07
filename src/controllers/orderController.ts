@@ -1,9 +1,9 @@
 import { Response } from "express";
-import mongoose from "mongoose";
+import mongoose, { FilterQuery } from "mongoose";
 import Order from "../models/orderModel";
 import Product from "../models/productModel";
 import User from "../models/userModel";
-import { OrderStatus } from "../types/order.types";
+import { OrderDocument, OrderStatus } from "../types/order.types";
 import { AuthRequest } from "../types/user.types";
 import APIFeatures from "../utils/apiFeatures";
 import catchAsync from "../utils/catchAsync";
@@ -415,69 +415,126 @@ export const updateOrderToDelivered = catchAsync(
 );
 
 /**
- * @desc    Get logged in user orders
+ * @desc    Get logged in user's orders with filtering, sorting, and pagination.
  * @route   GET /api/orders/myorders
  * @access  Private
  */
 export const getMyOrders = catchAsync(
   async (req: AuthRequest, res: Response) => {
+    // 1. Ensure the user is authenticated
     if (!req.user?._id) {
-      return res.status(401).json({ message: "Not authorized" });
+      return res.status(401).json({
+        status: "error",
+        message: "Not authorized. Please log in.",
+      });
     }
 
-    const features = new APIFeatures(
-      Order.find({ user: req.user._id }),
-      req.query
-    )
+    // 2. Create the base filter to only include orders for the logged-in user
+    const initialFilter: FilterQuery<OrderDocument> = { user: req.user._id };
+
+    // 3. Initialize the Mongoose query with the base filter
+    const orderQuery = Order.find(initialFilter);
+
+    // 4. Instantiate and chain the generic APIFeatures class to apply
+    //    additional filtering (e.g., ?status=pending), sorting, and pagination
+    //    from the request's query string (req.query).
+    const features = new APIFeatures(orderQuery, req.query)
       .filter()
       .sort()
       .limitFields()
       .paginate();
 
-    const orders = await features.query;
-    const total = await features.getTotalCount();
+    // 5. Execute both the main query (for paginated data) and the count query in parallel
+    //    for better performance.
+    const [orders, total] = await Promise.all([
+      features.query,
+      features.getTotalCount(), // Gets the total count matching the filters, ignoring pagination
+    ]);
 
+    // 6. Calculate pagination metadata needed by the frontend
+    const page = parseInt(String(req.query.page), 10) || 1;
+    const limit = parseInt(String(req.query.limit), 10) || 10;
+    const totalPages = Math.ceil(total / limit);
+
+    // 7. Send the structured, nested response that the frontend expects
     res.status(200).json({
       status: "success",
-      results: orders.length,
-      total,
-      data: orders,
+      data: {
+        orders: orders,
+        pagination: {
+          page,
+          limit,
+          total,
+          totalPages,
+        },
+      },
     });
   }
 );
 
 /**
- * @desc    Get all orders with filtering, sorting, and pagination
+ * @desc    Get all orders with filtering, sorting, and pagination (Admin only)
  * @route   GET /api/orders
  * @access  Private/Admin
  */
 export const getOrders = catchAsync(async (req: AuthRequest, res: Response) => {
-  if (!req.user?._id || req.user.role !== "admin") {
-    return res.status(401).json({ message: "Not authorized" });
+  // 1. Authorization check
+  if (req.user?.role !== "admin") {
+    // Note: The 'admin' middleware already handles this, but it's good practice for clarity.
+    return res.status(403).json({
+      status: "error",
+      message: "Forbidden: You do not have permission to perform this action.",
+    });
   }
 
-  const features = new APIFeatures(
-    Order.find().populate("user", "id name email"),
-    req.query
-  )
+  // 2. (Optional) Add any initial filters if needed. For admin, it's usually empty.
+  const initialFilter: FilterQuery<OrderDocument> = {};
+
+  // If you want to enable a 'keyword' search for admins, you'd add it here:
+  if (req.query.keyword && typeof req.query.keyword === "string") {
+    const keyword = req.query.keyword;
+    initialFilter.$or = [
+      { orderNumber: { $regex: keyword, $options: "i" } },
+      { "user.name": { $regex: keyword, $options: "i" } }, // Assuming user is populated
+      { "user.email": { $regex: keyword, $options: "i" } },
+    ];
+    // Don't forget to delete the keyword from req.query so APIFeatures doesn't process it
+    delete req.query.keyword;
+  }
+
+  // 3. Initialize the Mongoose query. Populate user data for the admin view.
+  const orderQuery = Order.find(initialFilter).populate("user", "name email");
+
+  // 4. Chain the generic APIFeatures to apply filtering, sorting, etc.
+  const features = new APIFeatures(orderQuery, req.query)
     .filter()
     .sort()
     .limitFields()
     .paginate();
 
-  const orders = await features.query;
-  const total = await features.getTotalCount();
+  // 5. Execute queries in parallel
+  const [orders, total] = await Promise.all([
+    features.query,
+    features.getTotalCount(),
+  ]);
 
-  const page = Number(req.query.page?.toString() || "1");
-  const limit = Number(req.query.limit?.toString() || "10");
+  // 6. Calculate pagination metadata
+  const page = parseInt(String(req.query.page), 10) || 1;
+  const limit = parseInt(String(req.query.limit), 10) || 15; // Using the admin page limit
+  const totalPages = Math.ceil(total / limit);
 
+  // 7. Send the structured, nested response that the frontend expects
   res.status(200).json({
     status: "success",
-    results: orders.length,
-    page,
-    pages: Math.ceil(total / limit),
-    total,
-    data: orders,
+    data: {
+      orders: orders,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages,
+      },
+    },
   });
 });
 

@@ -102,26 +102,37 @@ export const validateUpdatePassword = [
     ),
 ];
 
-// Cart validation - Fixed to use consistent quantity limits and field names
+// Cart validation - Fixed to accept productId in body
 export const validateAddToCart = [
-  body("product").isMongoId().withMessage("Invalid product ID"),
+  body("productId").isMongoId().withMessage("Invalid product ID"),
   body("quantity")
+    .optional()
     .isInt({ min: 1, max: 999 })
     .withMessage("Quantity must be between 1 and 999"),
+  body("variation")
+    .optional()
+    .isObject()
+    .withMessage("Variation must be an object"),
   body("variation.sku")
     .optional()
-    .isLength({ min: 1, max: 50 })
-    .withMessage("SKU must be between 1 and 50 characters"),
+    .isLength({ min: 1, max: 100 })
+    .withMessage("SKU must be between 1 and 100 characters"),
 ];
 
 export const validateUpdateCartItem = [
   param("productId").isMongoId().withMessage("Invalid product ID"),
   body("quantity")
-    .isInt({ min: 1, max: 999 })
-    .withMessage("Quantity must be between 1 and 999"),
+    .isInt({ min: 0, max: 999 })
+    .withMessage("Quantity must be between 0 and 999"),
+  body("variationSku")
+    .optional()
+    .isString()
+    .trim()
+    .isLength({ min: 1, max: 100 })
+    .withMessage("Variation SKU must be between 1 and 100 characters"),
 ];
 
-// Address validation - Fixed to make update validation consistent with model
+// Address validation
 export const validateAddAddress = [
   body("address")
     .notEmpty()
@@ -158,40 +169,44 @@ export const validateUpdateAddress = [
 
   body("address")
     .optional()
-    .notEmpty()
-    .withMessage("Address is required")
     .isLength({ min: 5, max: 200 })
     .withMessage("Address must be between 5 and 200 characters"),
 
   body("city")
     .optional()
-    .notEmpty()
-    .withMessage("City is required")
     .isLength({ min: 2, max: 50 })
     .withMessage("City must be between 2 and 50 characters"),
 
   body("postalCode")
     .optional()
-    .notEmpty()
-    .withMessage("Postal code is required")
     .isLength({ min: 3, max: 15 })
     .withMessage("Postal code must be between 3 and 15 characters"),
 
   body("country")
     .optional()
-    .notEmpty()
-    .withMessage("Country is required")
     .isLength({ min: 2, max: 50 })
     .withMessage("Country must be between 2 and 50 characters"),
 
   body("isDefault")
     .optional()
-    .optional()
     .isBoolean()
     .withMessage("isDefault must be a boolean"),
 ];
 
-// Cart item validation - Updated for consistency
+// Favorite item validation - Fixed to accept productId
+export const validateFavoriteItem = [
+  body("productId")
+    .isMongoId()
+    .withMessage("Invalid product ID")
+    .custom(async (value) => {
+      if (!mongoose.Types.ObjectId.isValid(value)) {
+        throw new Error("Invalid product ID format");
+      }
+      return true;
+    }),
+];
+
+// Cart item validation (legacy - kept for compatibility)
 export const validateCartItem = [
   body("productId")
     .isMongoId()
@@ -244,8 +259,7 @@ export const validateCartItem = [
 
   body("variation.sku")
     .if(body("variation").exists())
-    .notEmpty()
-    .withMessage("SKU is required when variation is provided")
+    .optional()
     .isString()
     .trim()
     .isLength({ min: 1, max: 100 })
@@ -267,19 +281,6 @@ export const validateCartUpdate = [
     .trim()
     .isLength({ min: 1, max: 100 })
     .withMessage("Variation SKU must be between 1 and 100 characters"),
-];
-
-// Favorite item validation
-export const validateFavoriteItem = [
-  body("productId")
-    .isMongoId()
-    .withMessage("Invalid product ID")
-    .custom(async (value) => {
-      if (!mongoose.Types.ObjectId.isValid(value)) {
-        throw new Error("Invalid product ID format");
-      }
-      return true;
-    }),
 ];
 
 // Pagination validation

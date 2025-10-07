@@ -1,44 +1,7 @@
+// src/models/productModel.ts
+
 import mongoose, { Schema } from "mongoose";
 import { ProductDocument } from "../types/product.types";
-
-const reviewSchema = new Schema(
-  {
-    user: {
-      type: Schema.Types.ObjectId as any,
-      required: true,
-      ref: "User",
-    },
-    name: {
-      type: String,
-      required: true,
-    },
-    rating: {
-      type: Number,
-      required: true,
-      min: 1,
-      max: 5,
-    },
-    comment: {
-      type: String,
-      required: true,
-    },
-    title: {
-      type: String,
-    },
-    images: [String],
-    isVerifiedPurchase: {
-      type: Boolean,
-      default: false,
-    },
-    helpfulVotes: {
-      type: Number,
-      default: 0,
-    },
-  },
-  {
-    timestamps: true,
-  }
-);
 
 const dimensionSchema = new Schema(
   {
@@ -63,7 +26,6 @@ const dimensionSchema = new Schema(
   { _id: false }
 );
 
-// Updated schema name for consistency
 const productVariationSchema = new Schema(
   {
     size: String,
@@ -113,42 +75,22 @@ const productSchema = new Schema<ProductDocument>(
       min: [0, "Price cannot be negative"],
     },
     category: {
-      type: String,
+      type: Schema.Types.ObjectId,
+      ref: "Category",
       required: [true, "Product category is required"],
     },
-    subcategories: [String],
     brand: {
-      type: String,
+      type: Schema.Types.ObjectId,
+      ref: "Brand",
       required: [true, "Product brand is required"],
     },
     images: {
       type: [String],
       default: ["/images/sample.jpg"],
-      validate: {
-        validator: function (images) {
-          // Allow both HTTP URLs and relative paths
-          return images.every((img: string) => {
-            if (img.startsWith("http") || img.startsWith("https")) {
-              return /^https?:\/\/.*\.(jpg|jpeg|png|gif|webp)$/i.test(img);
-            }
-            return /^\/.*\.(jpg|jpeg|png|gif|webp)$/i.test(img);
-          });
-        },
-        message: "All images must be valid URLs or relative paths",
-      },
     },
     mainImage: {
       type: String,
       default: "/images/sample.jpg",
-      validate: {
-        validator: function (img) {
-          if (img.startsWith("http") || img.startsWith("https")) {
-            return /^https?:\/\/.*\.(jpg|jpeg|png|gif|webp)$/i.test(img);
-          }
-          return /^\/.*\.(jpg|jpeg|png|gif|webp)$/i.test(img);
-        },
-        message: "Main image must be a valid URL or relative path",
-      },
     },
     countInStock: {
       type: Number,
@@ -160,7 +102,7 @@ const productSchema = new Schema<ProductDocument>(
       type: Boolean,
       default: false,
     },
-    variations: [productVariationSchema], // Updated to use consistent naming
+    variations: [productVariationSchema],
     rating: {
       type: Number,
       required: true,
@@ -173,7 +115,6 @@ const productSchema = new Schema<ProductDocument>(
       required: true,
       default: 0,
     },
-    reviews: [reviewSchema],
     featured: {
       type: Boolean,
       default: false,
@@ -217,23 +158,21 @@ const productSchema = new Schema<ProductDocument>(
   },
   {
     timestamps: true,
+    toJSON: { virtuals: true },
+    toObject: { virtuals: true },
   }
 );
 
-// Create text index for product search
-productSchema.index({
-  name: "text",
-  description: "text",
-  brand: "text",
-  category: "text",
+// Virtual populate for reviews
+productSchema.virtual("reviews", {
+  ref: "Review",
+  foreignField: "product",
+  localField: "_id",
 });
 
-// Define slug as unique in the index definition
 productSchema.index({ slug: 1 }, { unique: true });
 productSchema.index({ category: 1 });
 productSchema.index({ brand: 1 });
-productSchema.index({ onSale: 1 });
-productSchema.index({ featured: 1 });
 
 const Product = mongoose.model<ProductDocument>("Product", productSchema);
 

@@ -1,7 +1,6 @@
 import { body, param, query } from "express-validator";
 
 // Product validation - Fixed image validation to accept relative paths
-
 export const validateCreateProduct = [
   body("name")
     .trim()
@@ -12,20 +11,13 @@ export const validateCreateProduct = [
     .isLength({ min: 10, max: 1000 })
     .withMessage("Product description must be between 10 and 1000 characters"),
   body("price")
-    .isFloat({ min: 0, max: 999999 })
-    .withMessage("Price must be between 0 and 999,999"),
-  body("category")
-    .trim()
-    .isLength({ min: 2, max: 50 })
-    .withMessage("Category must be between 2 and 50 characters"),
-  body("brand")
-    .trim()
-    .isLength({ min: 2, max: 50 })
-    .withMessage("Brand must be between 2 and 50 characters"),
+    .isFloat({ min: 0 })
+    .withMessage("Price must be a positive number"),
+  body("category").isMongoId().withMessage("A valid category ID is required"),
+  body("brand").isMongoId().withMessage("A valid brand ID is required"),
   body("countInStock")
-    .optional()
-    .isInt({ min: 0, max: 9999 })
-    .withMessage("Count in stock must be between 0 and 9,999"),
+    .isInt({ min: 0 })
+    .withMessage("Count in stock must be a non-negative integer"),
   body("images").optional().isArray().withMessage("Images must be an array"),
   body("images.*")
     .optional()
@@ -149,7 +141,6 @@ export const validateCreateProduct = [
 
 export const validateUpdateProduct = [
   param("id").isMongoId().withMessage("Invalid product ID"),
-  // All fields are optional for updates
   body("name")
     .optional()
     .trim()
@@ -162,22 +153,20 @@ export const validateUpdateProduct = [
     .withMessage("Product description must be between 10 and 1000 characters"),
   body("price")
     .optional()
-    .isFloat({ min: 0, max: 999999 })
-    .withMessage("Price must be between 0 and 999,999"),
+    .isFloat({ min: 0 })
+    .withMessage("Price must be a positive number"),
   body("category")
     .optional()
-    .trim()
-    .isLength({ min: 2, max: 50 })
-    .withMessage("Category must be between 2 and 50 characters"),
+    .isMongoId()
+    .withMessage("A valid category ID is required"),
   body("brand")
     .optional()
-    .trim()
-    .isLength({ min: 2, max: 50 })
-    .withMessage("Brand must be between 2 and 50 characters"),
+    .isMongoId()
+    .withMessage("A valid brand ID is required"),
   body("countInStock")
     .optional()
-    .isInt({ min: 0, max: 9999 })
-    .withMessage("Count in stock must be between 0 and 9,999"),
+    .isInt({ min: 0 })
+    .withMessage("Count in stock must be a non-negative integer"),
   body("images").optional().isArray().withMessage("Images must be an array"),
   body("images.*")
     .optional()

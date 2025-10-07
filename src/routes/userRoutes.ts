@@ -16,7 +16,6 @@ import {
   getUserProfile,
   // Admin
   getUsers,
-  moveToFavorites,
   removeFromCart,
   removeFromFavorites,
   updateCartItem,
@@ -33,11 +32,11 @@ import {
 } from "../middleware/rateLimit";
 import {
   validateAddAddress,
-  validateCartItem,
-  validateCartUpdate,
+  validateAddToCart,
   validateFavoriteItem,
   validatePagination,
   validateUpdateAddress,
+  validateUpdateCartItem,
   validateUpdatePassword,
   validateUpdateProfile,
 } from "../middleware/userValidationMiddleware";
@@ -72,12 +71,19 @@ userRouter.put(
 // Address routes
 userRouter
   .route("/address")
-  .post(protect, validateAddAddress, handleValidationErrors, addUserAddress);
+  .post(
+    protect,
+    generalRateLimiters.strict,
+    validateAddAddress,
+    handleValidationErrors,
+    addUserAddress
+  );
 
 userRouter
   .route("/address/:addressId")
   .put(
     protect,
+    generalRateLimiters.strict,
     validateUpdateAddress,
     handleValidationErrors,
     updateUserAddress
@@ -91,7 +97,7 @@ userRouter
   .post(
     protect,
     ecommerceRateLimiters.cart,
-    validateCartItem,
+    validateAddToCart,
     handleValidationErrors,
     addToCart
   )
@@ -102,20 +108,16 @@ userRouter
   .put(
     protect,
     ecommerceRateLimiters.cart,
-    validateCartUpdate,
+    validateUpdateCartItem,
     handleValidationErrors,
     updateCartItem
   )
   .delete(protect, ecommerceRateLimiters.cart, removeFromCart);
 
-userRouter
-  .route("/cart/move-to-favorites/:productId")
-  .post(protect, ecommerceRateLimiters.cart, moveToFavorites);
-
 // Favorites routes with specific rate limiting
 userRouter
   .route("/favorites")
-  .get(protect, getFavorites)
+  .get(protect, validatePagination, handleValidationErrors, getFavorites)
   .post(
     protect,
     ecommerceRateLimiters.favorites,

@@ -1,4 +1,5 @@
-import { Document } from "mongoose";
+import { Document, Types } from "mongoose";
+import { ReviewDocument } from "./review.types";
 
 // Updated to match model naming
 export interface ProductVariation {
@@ -19,37 +20,22 @@ export interface ProductDimension {
   unit: string; // e.g., 'cm', 'inch'
 }
 
-export interface ProductReview {
-  _id?: string;
-  user: string;
-  name: string;
-  rating: number;
-  comment: string;
-  title?: string;
-  images?: string[];
-  isVerifiedPurchase: boolean;
-  helpfulVotes: number;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
 export interface ProductDocument extends Document {
   name: string;
   slug: string;
   description: string;
   richDescription?: string;
   price: number;
-  category: string;
-  subcategories?: string[];
-  brand: string;
+  category: Types.ObjectId; // Changed to ObjectId
+  brand: Types.ObjectId; // Changed to ObjectId
   images: string[];
   mainImage: string;
   countInStock: number;
   hasVariations: boolean;
   variations: ProductVariation[];
-  rating: number;
-  numReviews: number;
-  reviews: ProductReview[];
+  rating: number; // Will be calculated from reviews
+  numReviews: number; // Will be calculated from reviews
+  reviews?: ReviewDocument[]; // For virtual population
   featured: boolean;
   isNewProduct: boolean;
   onSale: boolean;
@@ -59,9 +45,9 @@ export interface ProductDocument extends Document {
   weight?: number;
   weightUnit: string;
   dimensions?: ProductDimension;
-  relatedProducts: string[]; // Fixed: Changed from ObjectId references to string array to match usage
+  relatedProducts: Types.ObjectId[]; // Changed to ObjectId array
   warranty?: string;
-  attributes?: Map<string, string>; // Fixed: Made optional to match model
+  attributes?: Map<string, string>;
   createdAt: Date;
   updatedAt: Date;
 }

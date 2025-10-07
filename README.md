@@ -1,353 +1,200 @@
-# E-Commerce API
+# E-Commerce REST API
 
-A comprehensive RESTful API for e-commerce applications built with Node.js, Express, TypeScript, and MongoDB. This backend service provides all the necessary endpoints for building a full-featured e-commerce platform, including user authentication, product management, order processing, and more.
+A robust and scalable RESTful API for an e-commerce platform built with Node.js, Express, TypeScript, and MongoDB. This API provides a complete backend solution for managing users, products, categories, brands, reviews, and orders.
 
-## Overview
+## ✨ Features
 
-This API is designed to support a full-featured e-commerce application with a focus on:
+- **Authentication**: Secure JWT-based authentication (Login, Register) with email verification and password reset functionality.
+- **User Management**: Complete user profile management including addresses, favorites/wishlist, and cart.
+- **Product Management**: Full CRUD operations for products, including complex features like variations, sale prices, and related products.
+- **Categorization**: Dedicated CRUD for product categories and brands, allowing for a structured product catalog.
+- **Reviews & Ratings**: Users can review products, and ratings are automatically calculated and aggregated.
+- **Order Processing**: A comprehensive order management system with transactional stock updates, order tracking, and status history.
+- **Advanced Backend Features**:
+  - **API Caching & Filtering**: Advanced filtering, sorting, pagination, and field limiting for all major resources.
+  - **Security**: Implemented with `helmet`, CORS, and robust validation.
+  - **Rate Limiting**: Protects the API from brute-force and denial-of-service attacks on critical endpoints.
+  - **Admin Dashboard**: Separate endpoints for admin-specific actions like fetching all users, managing orders, and viewing analytics.
+  - **Transactional Integrity**: Uses MongoDB sessions to ensure atomic operations for critical actions like creating an order and updating stock.
 
-- **Scalability**: Built with a modular architecture that can scale with your business
-- **Security**: Implements best practices for authentication, authorization, and data protection
-- **Performance**: Optimized database queries and response handling
-- **Maintainability**: Well-organized codebase with TypeScript for type safety
-- **Extensibility**: Easy to add new features and integrate with third-party services
+## 🚀 Tech Stack
 
-## Features
-
-### Authentication & User Management
-
-- Complete user authentication system with JWT
-- User registration with email verification
-- Secure password reset functionality
-- Role-based access control (Admin/User)
-- User profile management
-
-### Product Management
-
-- Comprehensive product CRUD operations
-- Advanced filtering, sorting, and pagination
-- Product categories and brands
-- Product variations (size, color, etc.)
-- Featured and on-sale product listings
-- Product reviews and ratings system
-
-### Order Management
-
-- Complete order processing workflow
-- Multiple payment method support
-- Order status tracking and history
-- Shipping information management
-- Order cancellation and refund handling
-- Discount and coupon support
-
-### Security
-
-- Input validation and sanitization
-- Password hashing with bcrypt
-- Protection against common web vulnerabilities
-- CORS and Helmet security headers
-
-### Email Notifications
-
-- Transactional email support
-- Email verification
-- Password reset emails
-- Order confirmation and updates
-
-## Tech Stack
-
-### Core
-
-- **Runtime**: Node.js
-- **Framework**: Express.js
+- **Backend**: Node.js, Express.js
 - **Language**: TypeScript
-- **Database**: MongoDB with Mongoose ODM
+- **Database**: MongoDB with Mongoose
+- **Authentication**: JSON Web Tokens (JWT)
+- **Validation**: `express-validator`
+- **Security**: `helmet`, `cors`, `express-rate-limit`
+- **Email**: `nodemailer`
 
-### Authentication & Security
-
-- **Authentication**: JWT (JSON Web Tokens)
-- **Password Hashing**: bcryptjs
-- **API Security**: Helmet (HTTP headers security)
-- **CORS**: Cross-Origin Resource Sharing support
-
-### Validation & Error Handling
-
-- **Input Validation**: Express Validator
-- **Error Handling**: Custom middleware for consistent error responses
-- **Async Handler**: Utility for handling async errors
-
-### Email & Notifications
-
-- **Email Service**: Nodemailer with Gmail transport
-- **HTML Emails**: Custom HTML templates for transactional emails
-
-### Development & Logging
-
-- **Development Server**: Nodemon for hot reloading
-- **Logging**: Morgan HTTP request logger
-- **Environment Variables**: dotenv for configuration management
-- **TypeScript**: Strong typing with interfaces and types
-
-## Project Structure
+## 📂 Project Structure
 
 ```
-├── src/
-│   ├── config/         # Configuration files
-│   │   ├── db.ts       # Database connection
-│   │   └── logger.ts   # Logging configuration
-│   ├── controllers/    # Request controllers
-│   │   ├── authController.ts    # Authentication logic
-│   │   ├── orderController.ts   # Order management
-│   │   ├── productController.ts # Product operations
-│   │   └── userController.ts    # User management
-│   ├── middleware/     # Custom middleware
-│   │   ├── authMiddleware.ts    # Authentication & authorization
-│   │   ├── errorMiddleware.ts   # Error handling
-│   │   ├── orderValidationMiddleware.ts # Order validation
-│   │   ├── productValidationMiddleware.ts # Product validation
-│   │   └── userValidationMiddleware.ts # User input validation
-│   ├── models/         # Mongoose models
-│   │   ├── orderModel.ts    # Order schema
-│   │   ├── productModel.ts  # Product schema
-│   │   └── userModel.ts     # User schema
-│   ├── routes/         # API routes
-│   │   ├── authRoutes.ts    # Authentication routes
-│   │   ├── orderRoutes.ts   # Order routes
-│   │   ├── productRoutes.ts # Product routes
-│   │   └── userRoutes.ts    # User routes
-│   ├── services/       # Business logic services
-│   │   ├── emailService.ts  # Email sending functionality
-│   │   └── tokenService.ts  # JWT token management
-│   ├── types/          # TypeScript type definitions
-│   │   ├── order.types.ts   # Order-related types
-│   │   ├── product.types.ts # Product-related types
-│   │   └── user.types.ts    # User-related types
-│   ├── utils/          # Utility functions
-│   │   ├── asyncHandler.ts  # Async error handling
-│   │   ├── generateToken.ts # JWT token generation
-│   │   └── validators.ts    # Common validation functions
-│   └── index.ts        # App entry point
-├── .env                # Environment variables
-├── .gitignore         # Git ignore file
-├── package.json       # Project dependencies
-├── tsconfig.json      # TypeScript configuration
-└── README.md          # Project documentation
+src
+├── config/                  # Environment variables, database connection
+├── controllers/             # Request handlers and business logic
+├── middleware/              # Express middleware (auth, error handling, validation, rate limiting)
+├── models/                  # Mongoose models and schemas
+├── routes/                  # API route definitions
+├── services/                # (Optional) Business logic extraction
+├── types/                   # TypeScript type definitions
+├── utils/                   # Utility functions (API Features, email service, etc.)
+└── index.ts                 # Main application entry point
 ```
 
-## API Endpoints
-
-### Authentication
-
-- `POST /api/v1/auth/register` - Register a new user
-- `POST /api/v1/auth/login` - Authenticate user & get token
-- `GET /api/v1/auth/verify-email/:token` - Verify user email
-- `POST /api/v1/auth/forgot-password` - Request password reset
-- `POST /api/v1/auth/reset-password/:token` - Reset user password
-
-### Users
-
-- `GET /api/v1/users/profile` - Get user profile (Protected)
-- `PUT /api/v1/users/profile` - Update user profile (Protected)
-- `GET /api/v1/users` - Get all users (Admin only)
-- `GET /api/v1/users/:id` - Get user by ID (Admin only)
-- `PUT /api/v1/users/:id` - Update user (Admin only)
-- `DELETE /api/v1/users/:id` - Delete user (Admin only)
-
-### Products
-
-- `GET /api/v1/products` - Get all products with filtering, sorting, and pagination
-- `GET /api/v1/products/featured` - Get featured products
-- `GET /api/v1/products/sale` - Get products on sale
-- `GET /api/v1/products/:id` - Get a single product by ID or slug
-- `POST /api/v1/products` - Create a product (Admin only)
-- `PUT /api/v1/products/:id` - Update a product (Admin only)
-- `DELETE /api/v1/products/:id` - Delete a product (Admin only)
-- `POST /api/v1/products/:id/reviews` - Create product review (Protected)
-- `GET /api/v1/products/:id/reviews` - Get product reviews
-
-### Orders
-
-- `POST /api/v1/orders` - Create new order (Protected)
-- `GET /api/v1/orders/myorders` - Get logged in user orders (Protected)
-- `GET /api/v1/orders` - Get all orders (Admin only)
-- `GET /api/v1/orders/:id` - Get order by ID or order number (Protected)
-- `PUT /api/v1/orders/:id/pay` - Update order to paid (Protected)
-- `PUT /api/v1/orders/:id/deliver` - Update order to delivered (Admin only)
-- `PUT /api/v1/orders/:id/status` - Update order status (Admin only)
-- `PUT /api/v1/orders/:id/tracking` - Add tracking information (Admin only)
-- `PUT /api/v1/orders/:id/cancel` - Cancel order (Protected)
-
-## Getting Started
+## ⚙️ Setup and Installation
 
 ### Prerequisites
 
-- Node.js (v14 or higher)
-- MongoDB (local instance or MongoDB Atlas)
+- Node.js (v18 or higher)
 - npm or yarn
+- MongoDB (can be run locally or using a cloud service like MongoDB Atlas)
+- (Optional) Docker and Docker Compose for easy database setup.
 
-### Installation
+### Installation Steps
 
-1. Clone the repository
+1.  **Clone the repository:**
 
-   ```bash
-   git clone <repository-url>
-   cd e-commerce/backend
-   ```
+    ```bash
+    git clone <your-repo-url>
+    cd <repo-name>
+    ```
 
-2. Install dependencies
+2.  **Install dependencies:**
 
-   ```bash
-   npm install
-   # or
-   yarn install
-   ```
+    ```bash
+    npm install
+    ```
 
-3. Set up environment variables
+3.  **Set up environment variables:**
+    Create a `.env` file in the root of the project and add the following variables. Replace the placeholder values with your actual configuration.
 
-   - Create a `.env` file in the root directory based on `.env.example`
-   - Configure your MongoDB connection, JWT secrets, and email settings
+    ```ini
+    # .env
 
-4. Build the TypeScript code
+    # Server Configuration
+    NODE_ENV=development
+    PORT=5000
+    BASE_URL=http://localhost:5000
 
-   ```bash
-   npm run build
-   # or
-   yarn build
-   ```
+    # MongoDB Configuration
+    # Example for local MongoDB with replica set for transactions
+    MONGO_URI=mongodb://mongodb:27017/ecommerce?replicaSet=rs0
 
-5. Run the development server
-   ```bash
-   npm run dev
-   # or
-   yarn dev
-   ```
+    # JWT Configuration
+    JWT_SECRET=your_super_secret_jwt_key
+    JWT_EXPIRES_IN=30d
 
-### Environment Variables
+    # Email Configuration (using Nodemailer with a Gmail App Password)
+    EMAIL_USER=your_email@gmail.com
+    EMAIL_PASS=your_gmail_app_password
+    EMAIL_FROM="Your App Name"
 
-Create a `.env` file in the root directory with the following variables:
+    # Frontend URL (for email links)
+    FRONTEND_BASE_URL=http://localhost:3000
+    ```
 
-```
-# Server Configuration
-NODE_ENV=development
-PORT=5000
-API_URL=http://localhost:5000
-CLIENT_URL=http://localhost:3000
+4.  **Start the server:**
 
-# Database Configuration
-MONGO_URI=your_mongodb_connection_string
+    ```bash
+    # For development with live reloading
+    npm run dev
 
-# JWT Configuration
-JWT_SECRET=your_jwt_secret
-JWT_EXPIRE=30d
-JWT_COOKIE_EXPIRE=30
+    # For production
+    npm run build
+    npm start
+    ```
 
-# Email Configuration (for password reset and email verification)
-EMAIL_SERVICE=gmail
-EMAIL_USER=your_email@gmail.com
-EMAIL_PASS=your_email_app_password
+The API will be running at `http://localhost:5000`.
 
-# Optional: Payment Gateway Configuration
-STRIPE_SECRET_KEY=your_stripe_secret_key
-STRIPE_WEBHOOK_SECRET=your_stripe_webhook_secret
-```
+## API Endpoints
 
-### API Testing
+All endpoints are prefixed with `/api/v1`.
 
-You can test the API endpoints using tools like Postman or Insomnia. A comprehensive Postman collection and environment are included in this repository for quick setup:
+### Authentication (`/auth`)
 
-1. Open Postman
-2. Import the collection file from `docs/postman/e-commerce-api.postman_collection.json`
-3. Import the environment file from `docs/postman/e-commerce-api.postman_environment.json`
-4. Select the "E-Commerce API Environment" from the environment dropdown in Postman
+| Method | Endpoint                 | Description                        | Access |
+| :----- | :----------------------- | :--------------------------------- | :----- |
+| `POST` | `/login`                 | Log in a user and get a JWT token. | Public |
+| `POST` | `/register`              | Register a new user.               | Public |
+| `GET`  | `/verify-email/:token`   | Verify a user's email address.     | Public |
+| `POST` | `/forgot-password`       | Request a password reset email.    | Public |
+| `POST` | `/reset-password/:token` | Reset password with a valid token. | Public |
 
-#### Using the Postman Collection
+### Users (`/users`)
 
-The collection is organized into four main folders:
+| Method   | Endpoint                | Description                           | Access  |
+| :------- | :---------------------- | :------------------------------------ | :------ |
+| `GET`    | `/profile`              | Get the logged-in user's profile.     | Private |
+| `PUT`    | `/profile`              | Update the logged-in user's profile.  | Private |
+| `PUT`    | `/update-password`      | Update the logged-in user's password. | Private |
+| `POST`   | `/address`              | Add a new shipping address.           | Private |
+| `PUT`    | `/address/:addressId`   | Update a shipping address.            | Private |
+| `DELETE` | `/address/:addressId`   | Delete a shipping address.            | Private |
+| `GET`    | `/cart`                 | Get the user's shopping cart.         | Private |
+| `POST`   | `/cart`                 | Add an item to the cart.              | Private |
+| `DELETE` | `/cart`                 | Clear the entire cart.                | Private |
+| `PUT`    | `/cart/:productId`      | Update quantity of a cart item.       | Private |
+| `DELETE` | `/cart/:productId`      | Remove an item from the cart.         | Private |
+| `GET`    | `/favorites`            | Get the user's favorites/wishlist.    | Private |
+| `POST`   | `/favorites`            | Add a product to favorites.           | Private |
+| `DELETE` | `/favorites/:productId` | Remove a product from favorites.      | Private |
+| `GET`    | `/`                     | Get all users (paginated).            | Admin   |
 
-1. **Authentication** - Register, login, verify email, and reset password
-2. **Users** - User profile, addresses, cart, favorites, and order history
-3. **Products** - Browse, search, and manage products and reviews
-4. **Orders** - Create and manage orders
+### Categories (`/categories`)
 
-The environment includes the following variables that are used throughout the requests:
+| Method   | Endpoint | Description            | Access |
+| :------- | :------- | :--------------------- | :----- |
+| `GET`    | `/`      | Get all categories.    | Public |
+| `GET`    | `/:id`   | Get a single category. | Public |
+| `POST`   | `/`      | Create a new category. | Admin  |
+| `PUT`    | `/:id`   | Update a category.     | Admin  |
+| `DELETE` | `/:id`   | Delete a category.     | Admin  |
 
-- `baseUrl`: Set to your API URL (default: `http://localhost:5000/api/v1`)
-- `token`: Automatically populated when you use the Login endpoint
-- `userId`, `productId`, `orderId`, `addressId`: Can be set as you create resources
+### Brands (`/brands`)
 
-To get started:
+| Method   | Endpoint | Description         | Access |
+| :------- | :------- | :------------------ | :----- |
+| `GET`    | `/`      | Get all brands.     | Public |
+| `GET`    | `/:id`   | Get a single brand. | Public |
+| `POST`   | `/`      | Create a new brand. | Admin  |
+| `PUT`    | `/:id`   | Update a brand.     | Admin  |
+| `DELETE` | `/:id`   | Delete a brand.     | Admin  |
 
-1. Use the "Register User" request to create an account
-2. Use the "Login User" request to authenticate (this will automatically set your token)
-3. Explore the other endpoints as needed
+### Products (`/products`)
 
-### Running in Production
+| Method   | Endpoint    | Description            | Access |
+| :------- | :---------- | :--------------------- | :----- |
+| `GET`    | `/`         | Get all products.      | Public |
+| `GET`    | `/:id`      | Get a single product.  | Public |
+| `GET`    | `/featured` | Get featured products. | Public |
+| `GET`    | `/sale`     | Get products on sale.  | Public |
+| `POST`   | `/`         | Create a new product.  | Admin  |
+| `PUT`    | `/:id`      | Update a product.      | Admin  |
+| `DELETE` | `/:id`      | Delete a product.      | Admin  |
 
-To run the server in production mode:
+### Reviews (`/reviews`)
 
-```bash
-# Build the TypeScript code
-npm run build
+| Method   | Endpoint | Description                              | Access  |
+| :------- | :------- | :--------------------------------------- | :------ |
+| `GET`    | `/`      | Get all reviews (can filter by product). | Public  |
+| `GET`    | `/:id`   | Get a single review.                     | Public  |
+| `POST`   | `/`      | Create a new review.                     | Private |
+| `PUT`    | `/:id`   | Update your own review.                  | Private |
+| `DELETE` | `/:id`   | Delete a review (owner or admin).        | Private |
 
-# Start the production server
-npm start
-```
+### Orders (`/orders`)
 
-## Error Handling
+| Method | Endpoint       | Description                            | Access  |
+| :----- | :------------- | :------------------------------------- | :------ |
+| `POST` | `/`            | Create a new order.                    | Private |
+| `GET`  | `/myorders`    | Get all orders for the logged-in user. | Private |
+| `GET`  | `/:id`         | Get an order by ID or order number.    | Private |
+| `PUT`  | `/:id/pay`     | Update an order to paid.               | Private |
+| `PUT`  | `/:id/cancel`  | Cancel an order.                       | Private |
+| `GET`  | `/`            | Get all orders in the system.          | Admin   |
+| `GET`  | `/analytics`   | Get order analytics.                   | Admin   |
+| `PUT`  | `/:id/status`  | Update an order's status.              | Admin   |
+| `PUT`  | `/:id/deliver` | Mark an order as delivered.            | Admin   |
 
-The API uses a consistent error handling approach:
-
-- All errors return a standardized JSON response format
-- HTTP status codes are used appropriately (400, 401, 403, 404, 500, etc.)
-- Validation errors include detailed information about what failed
-- Custom error classes extend the base Error class for specific error types
-
-Example error response:
-
-```json
-{
-  "success": false,
-  "error": {
-    "statusCode": 400,
-    "message": "Invalid input data",
-    "details": [
-      {
-        "field": "email",
-        "message": "Please enter a valid email address"
-      }
-    ]
-  }
-}
-```
-
-## Authentication
-
-The API uses JWT (JSON Web Tokens) for authentication:
-
-- Tokens are issued at login and user registration
-- Protected routes require a valid token in the Authorization header
-- Tokens expire after the configured time period
-- Role-based access control for admin-only routes
-
-## Documentation
-
-API documentation is available at the following endpoints:
-
-- Swagger UI: `/api-docs`
-- API Specification: `/api-docs.json`
-
-## Contributing
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-## License
-
-MIT
-
-## Author
-
-Your Name
+---

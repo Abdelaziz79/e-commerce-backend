@@ -1,74 +1,76 @@
-import { Query, Document } from "mongoose";
+// utils/apiFeatures.ts
+import { Query, Document, FilterQuery } from "mongoose";
 import { ParsedQs } from "qs";
-import { Request } from "express";
-
-// Define a more flexible QueryString type that handles Express request query objects
-type QueryValue = string | string[] | ParsedQs | ParsedQs[] | undefined;
-
-interface QueryString {
-  [key: string]: QueryValue;
-}
 
 /**
- * API Features class to handle common query operations
- * - Filtering
- * - Sorting
- * - Field limiting
- * - Pagination
+ * API Features class to handle common query operations for Mongoose.
+ * This class is designed to be chained.
+ *
+ * @example
+ * // In your controller:
+ * const features = new APIFeatures(Product.find(), req.query)
+ *   .filter()
+ *   .sort()
+ *   .limitFields()
+ *   .paginate();
+ *
+ * const products = await features.query;
+ * const total = await features.getTotalCount(); // Get total count for pagination
  */
 class APIFeatures<T extends Document> {
+  // The Mongoose query object we will manipulate
   public query: Query<T[], T>;
-  public queryString: QueryString;
+  // The Express query string object (e.g., req.query)
+  private queryString: ParsedQs;
+  // Store the filter conditions separately for counting
+  private filterConditions: FilterQuery<T> = {};
 
-  constructor(
-    query: Query<T[], T>,
-    queryString: Request["query"] | QueryString
-  ) {
+  constructor(query: Query<T[], T>, queryString: ParsedQs) {
     this.query = query;
-    this.queryString = queryString as QueryString;
+    this.queryString = queryString;
   }
 
   /**
-   * Filtering
-   * Example: ?price[gte]=100&category=Electronics
-   * Excludes special keywords like page, sort, limit, fields
+   * Filters the query based on the query string.
+   * Handles advanced filtering with MongoDB operators (gte, gt, lte, lt).
+   * Excludes special keywords used for other features (page, sort, limit, fields).
    */
-  filter() {
+  public filter(): this {
+    // 1. Create a shallow copy of the query string to modify
     const queryObj = { ...this.queryString };
-    const excludedFields = ["page", "sort", "limit", "fields", "keyword"];
+
+    // 2. Remove special feature keywords from the filter object
+    const excludedFields = ["page", "sort", "limit", "fields"];
     excludedFields.forEach((el) => delete queryObj[el]);
 
-    // Advanced filtering for operators like gte, gt, lte, lt
+    // 3. Convert to string and replace operators (gte, gt, lte, lt) with MongoDB syntax ($gte, $gt, etc.)
+    // This is a clever way to handle range queries like ?price[gte]=100
     let queryStr = JSON.stringify(queryObj);
-    queryStr = queryStr.replace(/\b(gte|gt|lte|lt)\b/g, (match) => `$${match}`);
+    queryStr = queryStr.replace(
+      /\b(gte|gt|lte|lt|in)\b/g,
+      (match) => `$${match}`
+    );
 
-    this.query = this.query.find(JSON.parse(queryStr));
+    // 4. Parse the string back to an object and store it
+    this.filterConditions = JSON.parse(queryStr);
 
-    // Handle keyword search if present
-    if (this.queryString.keyword) {
-      const keyword = this.queryString.keyword.toString();
-      const keywordFilter = {
-        $or: [
-          { name: { $regex: keyword, $options: "i" } },
-          { description: { $regex: keyword, $options: "i" } },
-        ],
-      };
-      this.query = this.query.find(keywordFilter);
-    }
+    // 5. Apply the filter to the Mongoose query
+    this.query = this.query.find(this.filterConditions);
 
     return this;
   }
 
   /**
-   * Sorting
-   * Example: ?sort=price,-createdAt (ascending price, descending createdAt)
+   * Sorts the query results.
+   * Allows multiple sort fields, separated by commas (e.g., ?sort=price,-createdAt).
+   * Defaults to sorting by creation date descending if no sort is specified.
    */
-  sort() {
-    if (this.queryString.sort) {
-      const sortBy = this.queryString.sort.toString().split(",").join(" ");
+  public sort(): this {
+    if (this.queryString.sort && typeof this.queryString.sort === "string") {
+      const sortBy = this.queryString.sort.split(",").join(" ");
       this.query = this.query.sort(sortBy);
     } else {
-      // Default sort by createdAt descending
+      // Sensible default sort order
       this.query = this.query.sort("-createdAt");
     }
 
@@ -76,15 +78,19 @@ class APIFeatures<T extends Document> {
   }
 
   /**
-   * Field limiting
-   * Example: ?fields=name,price,rating (select only these fields)
+   * Limits the fields returned in the results (projection).
+   * Allows multiple fields, separated by commas (e.g., ?fields=name,price).
+   * Defaults to excluding the '__v' field.
    */
-  limitFields() {
-    if (this.queryString.fields) {
-      const fields = this.queryString.fields.toString().split(",").join(" ");
+  public limitFields(): this {
+    if (
+      this.queryString.fields &&
+      typeof this.queryString.fields === "string"
+    ) {
+      const fields = this.queryString.fields.split(",").join(" ");
       this.query = this.query.select(fields);
     } else {
-      // By default, exclude the MongoDB __v field
+      // Exclude the __v field by default for cleaner output
       this.query = this.query.select("-__v");
     }
 
@@ -92,16 +98,14 @@ class APIFeatures<T extends Document> {
   }
 
   /**
-   * Pagination
-   * Example: ?page=2&limit=10
+   * Paginates the query results.
+   * Uses 'page' and 'limit' from the query string.
+   * Provides sensible defaults if not specified.
    */
-  paginate() {
-    const page = this.queryString.page
-      ? Number(this.queryString.page.toString())
-      : 1;
-    const limit = this.queryString.limit
-      ? Number(this.queryString.limit.toString())
-      : 10;
+  public paginate(): this {
+    // Provide robust defaults
+    const page = parseInt(String(this.queryString.page), 10) || 1;
+    const limit = parseInt(String(this.queryString.limit), 10) || 10;
     const skip = (page - 1) * limit;
 
     this.query = this.query.skip(skip).limit(limit);
@@ -110,13 +114,14 @@ class APIFeatures<T extends Document> {
   }
 
   /**
-   * Get total count for pagination metadata
+   * Efficiently gets the total count of documents that match the filter criteria,
+   * before pagination is applied.
+   * @returns {Promise<number>} The total number of documents.
    */
-  async getTotalCount(): Promise<number> {
-    // Create a copy of the query to count total documents
-    // This removes pagination but keeps filters
-    const countQuery = this.query.model.find(this.query.getFilter());
-    return await countQuery.countDocuments();
+  public async getTotalCount(): Promise<number> {
+    // This uses the stored filterConditions to count all matching documents
+    // without being affected by pagination (.skip/.limit).
+    return this.query.model.countDocuments(this.filterConditions);
   }
 }
 
