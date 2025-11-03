@@ -2,9 +2,8 @@
 
 import mongoose, { Schema, Model } from "mongoose";
 import { ReviewDocument } from "../types/review.types";
-import Product from "./productModel"; // Import Product model
+import Product from "./productModel";
 
-// Define statics interface for the model
 interface ReviewModel extends Model<ReviewDocument> {
   calculateAverageRating(productId: mongoose.Types.ObjectId): Promise<void>;
 }
@@ -45,10 +44,15 @@ const reviewSchema = new Schema<ReviewDocument, ReviewModel>(
       type: Number,
       default: 0,
     },
+    helpfulVotedBy: [
+      {
+        type: Schema.Types.ObjectId,
+        ref: "User",
+      },
+    ],
   },
   {
     timestamps: true,
-    // Ensure virtuals are included when converting to JSON
     toJSON: { virtuals: true },
     toObject: { virtuals: true },
   }
@@ -56,6 +60,9 @@ const reviewSchema = new Schema<ReviewDocument, ReviewModel>(
 
 // Prevent user from submitting more than one review per product
 reviewSchema.index({ product: 1, user: 1 }, { unique: true });
+
+// Index for efficient helpful vote queries
+reviewSchema.index({ helpfulVotedBy: 1 });
 
 // Static method to calculate average rating and number of reviews
 reviewSchema.statics.calculateAverageRating = async function (
@@ -80,7 +87,6 @@ reviewSchema.statics.calculateAverageRating = async function (
       numReviews: stats[0].numReviews,
     });
   } else {
-    // If no reviews, reset to default
     await Product.findByIdAndUpdate(productId, {
       rating: 0,
       numReviews: 0,
@@ -94,7 +100,6 @@ reviewSchema.post("save", function () {
 });
 
 // Call calculateAverageRating after removing a review
-// Note: findByIdAndDelete triggers 'findOneAndDelete' middleware
 reviewSchema.post("findOneAndDelete", async function (doc) {
   if (doc) {
     await (doc.constructor as ReviewModel).calculateAverageRating(doc.product);

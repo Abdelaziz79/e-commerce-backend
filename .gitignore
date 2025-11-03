@@ -33,3 +33,5 @@ coverage/
 *.swp
 *.swo
 .DS_Store 
+
+uploads

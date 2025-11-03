@@ -276,6 +276,37 @@ export const validateUpdateProduct = [
     .withMessage("Warranty cannot exceed 200 characters"),
 ];
 
+// Validation for bulk operations
+export const validateBulkUpdate = [
+  body("productIds")
+    .isArray({ min: 1 })
+    .withMessage("Product IDs array is required and must not be empty"),
+  body("productIds.*")
+    .isMongoId()
+    .withMessage("Each product ID must be a valid MongoDB ObjectId"),
+  body("updates").isObject().withMessage("Updates object is required"),
+];
+
+export const validateBulkDelete = [
+  body("productIds")
+    .isArray({ min: 1 })
+    .withMessage("Product IDs array is required and must not be empty"),
+  body("productIds.*")
+    .isMongoId()
+    .withMessage("Each product ID must be a valid MongoDB ObjectId"),
+];
+
+// Validation for stock adjustment
+export const validateStockAdjustment = [
+  param("id").isMongoId().withMessage("Invalid product ID"),
+  body("adjustment").isInt().withMessage("Adjustment must be an integer"),
+  body("reason")
+    .optional()
+    .trim()
+    .isLength({ min: 3, max: 200 })
+    .withMessage("Reason must be between 3 and 200 characters"),
+];
+
 // Enhanced review validation with all model fields
 export const validateCreateReview = [
   param("id").isMongoId().withMessage("Invalid product ID"),
@@ -391,4 +422,12 @@ export const validateProductQuery = [
     .trim()
     .isLength({ min: 1, max: 100 })
     .withMessage("Search term must be between 1 and 100 characters"),
+];
+
+// Validation for low stock query
+export const validateLowStockQuery = [
+  query("threshold")
+    .optional()
+    .isInt({ min: 0, max: 1000 })
+    .withMessage("Threshold must be between 0 and 1000"),
 ];

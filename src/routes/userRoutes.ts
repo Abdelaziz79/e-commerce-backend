@@ -1,42 +1,43 @@
 import express from "express";
 import {
-  // Cart management
   addToCart,
-  // Favorites management
-  addToFavorites,
-  // Address management
-  addUserAddress,
   clearCart,
-  deleteUserAddress,
   getCart,
-  getFavorites,
-  // Order history
-  getOrderHistory,
-  // User profile
-  getUserProfile,
-  // Admin
-  getUsers,
   removeFromCart,
-  removeFromFavorites,
   updateCartItem,
+} from "../controllers/cartController";
+import {
+  addToFavorites,
+  addUserAddress,
+  deleteAvatar,
+  deleteUserAddress,
+  getFavorites,
+  getOrderHistory,
+  getUserProfile,
+  getUsers,
+  removeFromFavorites,
   updateUserAddress,
   updateUserPassword,
   updateUserProfile,
+  uploadAvatar,
 } from "../controllers/userController";
 import { admin, protect } from "../middleware/authMiddleware";
+import {
+  validateAddToCart,
+  validateUpdateCartItem,
+} from "../middleware/cartValidationMiddleware";
 import { handleValidationErrors } from "../middleware/errorMiddleware";
 import {
   ecommerceRateLimiters,
   generalRateLimiters,
   userRateLimiters,
 } from "../middleware/rateLimit";
+import { avatarImageUpload } from "../middleware/uploadMiddleware";
 import {
   validateAddAddress,
-  validateAddToCart,
   validateFavoriteItem,
   validatePagination,
   validateUpdateAddress,
-  validateUpdateCartItem,
   validateUpdatePassword,
   validateUpdateProfile,
 } from "../middleware/userValidationMiddleware";
@@ -57,6 +58,12 @@ userRouter
     handleValidationErrors,
     updateUserProfile
   );
+
+// Avatar routes
+userRouter
+  .route("/avatar")
+  .put(protect, userRateLimiters.profileUpdate, avatarImageUpload, uploadAvatar)
+  .delete(protect, deleteAvatar);
 
 // Password update with strict rate limiting
 userRouter.put(

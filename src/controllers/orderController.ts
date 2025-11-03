@@ -8,7 +8,6 @@ import { AuthRequest } from "../types/user.types";
 import APIFeatures from "../utils/apiFeatures";
 import catchAsync from "../utils/catchAsync";
 
-// Type for populated user field in order
 interface PopulatedUser {
   _id: mongoose.Types.ObjectId;
   name: string;
@@ -22,7 +21,6 @@ interface PopulatedUser {
  */
 export const createOrder = catchAsync(
   async (req: AuthRequest, res: Response) => {
-    // 1. Authenticate user
     if (!req.user?._id) {
       return res.status(401).json({
         status: "error",
@@ -42,7 +40,7 @@ export const createOrder = catchAsync(
       notes,
     } = req.body;
 
-    // 2. Validate incoming data
+    // Validate order items
     if (!orderItems || orderItems.length === 0) {
       return res.status(400).json({
         status: "error",
@@ -50,101 +48,189 @@ export const createOrder = catchAsync(
       });
     }
 
-    // 3. Start a database session and transaction
-    const session = await mongoose.startSession();
-    try {
-      // The result of the transaction will be stored in 'createdOrder'
-      const createdOrder = await session.withTransaction(async () => {
-        // --- START OF TRANSACTION LOGIC ---
+    // Validate required fields
+    if (!shippingAddress || !paymentMethod) {
+      return res.status(400).json({
+        status: "error",
+        message: "Shipping address and payment method are required",
+      });
+    }
 
+    const session = await mongoose.startSession();
+
+    try {
+      const createdOrder = await session.withTransaction(async () => {
+        // Fetch all UNIQUE products in one query
         const productIds = orderItems.map((item: any) => item.product);
-        const products = await Product.find({ _id: { $in: productIds } })
-          .session(session)
-          .lean();
+        const uniqueProductIds = [...new Set(productIds)];
+
+        const products = await Product.find<any>({
+          _id: { $in: uniqueProductIds },
+        }).session(session);
+
+        // Check if we found all unique products
+        if (products.length !== uniqueProductIds.length) {
+          const foundIds = new Set(products.map((p) => p._id.toString()));
+          const missingIds = uniqueProductIds.filter(
+            (id: any) => !foundIds.has(id.toString())
+          );
+          throw new Error(`Products not found: ${missingIds.join(", ")}`);
+        }
+
         const productMap = new Map(products.map((p) => [p._id.toString(), p]));
 
-        // Validate each item and prepare for stock update
+        // Validate items and check stock
+        const stockUpdates: Array<{
+          productId: string;
+          sku?: string;
+          quantity: number;
+        }> = [];
+
         for (const item of orderItems) {
           const product = productMap.get(item.product);
           if (!product) {
-            throw new Error(`Product "${item.name}" not found`);
+            throw new Error(`Product with ID ${item.product} not found`);
           }
 
           let expectedPrice = product.price;
           let availableStock = product.countInStock;
 
+          // Handle variations
           if (product.hasVariations && item.variation?.sku) {
             const variation = product.variations?.find(
-              (v) => v.sku === item.variation.sku
+              (v: any) => v.sku === item.variation.sku
             );
+
             if (!variation) {
               throw new Error(
-                `Variation with SKU "${item.variation.sku}" not found for "${item.name}"`
+                `Variation "${item.variation.sku}" not found for "${product.name}"`
               );
             }
+
             expectedPrice = variation.price;
             availableStock = variation.countInStock;
+
+            stockUpdates.push({
+              productId: item.product,
+              sku: item.variation.sku,
+              quantity: item.quantity,
+            });
+          } else {
+            stockUpdates.push({
+              productId: item.product,
+              quantity: item.quantity,
+            });
           }
 
+          // Validate stock
           if (availableStock < item.quantity) {
             throw new Error(
-              `Insufficient stock for "${item.name}". Available: ${availableStock}, Requested: ${item.quantity}`
+              `Insufficient stock for "${product.name}". Available: ${availableStock}, Requested: ${item.quantity}`
             );
           }
+
+          // Validate price (allow 0.01 difference for rounding)
           if (Math.abs(expectedPrice - item.price) > 0.01) {
             throw new Error(
-              `Price mismatch for "${item.name}". Expected: ${expectedPrice}, Provided: ${item.price}`
+              `Price mismatch for "${
+                product.name
+              }". Expected: ${expectedPrice.toFixed(
+                2
+              )}, Got: ${item.price.toFixed(2)}`
             );
           }
         }
 
-        // Update stock for all products
-        for (const item of orderItems) {
-          if (item.variation?.sku) {
-            await Product.updateOne(
-              { _id: item.product, "variations.sku": item.variation.sku },
-              { $inc: { "variations.$.countInStock": -item.quantity } },
+        // Calculate and validate prices
+        const calculatedItemsPrice = orderItems.reduce(
+          (sum: number, item: any) => sum + item.price * item.quantity,
+          0
+        );
+
+        if (Math.abs(calculatedItemsPrice - itemsPrice) > 0.01) {
+          throw new Error(
+            `Items price mismatch. Expected: ${calculatedItemsPrice.toFixed(
+              2
+            )}, Got: ${itemsPrice.toFixed(2)}`
+          );
+        }
+
+        // Calculate discount amount based on type
+        let discountAmount = 0;
+        if (discount?.value) {
+          if (discount.type === "percentage") {
+            discountAmount = (calculatedItemsPrice * discount.value) / 100;
+          } else if (discount.type === "fixed") {
+            discountAmount = discount.value;
+          }
+        }
+
+        const subtotal = calculatedItemsPrice;
+        const calculatedTotal =
+          subtotal + taxPrice + shippingPrice - discountAmount;
+
+        if (Math.abs(calculatedTotal - totalPrice) > 0.01) {
+          throw new Error(
+            `Total price mismatch. Expected: ${calculatedTotal.toFixed(
+              2
+            )}, Got: ${totalPrice.toFixed(2)}`
+          );
+        }
+
+        // Update stock for all items
+        for (const update of stockUpdates) {
+          if (update.sku) {
+            const result = await Product.updateOne(
+              {
+                _id: update.productId,
+                "variations.sku": update.sku,
+              },
+              {
+                $inc: { "variations.$.countInStock": -update.quantity },
+              },
               { session }
             );
+
+            if (result.matchedCount === 0) {
+              throw new Error(
+                `Failed to update stock for variation ${update.sku}`
+              );
+            }
           } else {
-            await Product.updateOne(
-              { _id: item.product },
-              { $inc: { countInStock: -item.quantity } },
+            const result = await Product.updateOne(
+              { _id: update.productId },
+              {
+                $inc: { countInStock: -update.quantity },
+              },
               { session }
             );
+
+            if (result.matchedCount === 0) {
+              throw new Error(
+                `Failed to update stock for product ${update.productId}`
+              );
+            }
           }
         }
 
-        // Generate a unique order number
-        const date = new Date();
-        const year = date.getFullYear().toString().substr(-2);
-        const month = (date.getMonth() + 1).toString().padStart(2, "0");
-        const day = date.getDate().toString().padStart(2, "0");
-        const randomPart = Math.floor(
-          100000 + Math.random() * 900000
-        ).toString();
-        const orderNumber = `ORD-${year}${month}${day}-${randomPart}`;
-
-        // Create the new order
+        // Create order
         const order = new Order({
-          orderNumber,
-          orderItems,
           user: req.user!._id,
+          orderItems,
           shippingAddress,
           paymentMethod,
           itemsPrice,
+          subtotal,
           taxPrice,
           shippingPrice,
           totalPrice,
           discount,
+          discountAmount,
           notes,
           status: "pending",
-          statusHistory: [
-            { status: "pending", date: new Date(), note: "Order created" },
-          ],
         });
 
-        const newOrder = await order.save({ session });
+        const savedOrder = await order.save({ session });
 
         // Update user's order history
         await User.findByIdAndUpdate(
@@ -152,42 +238,34 @@ export const createOrder = catchAsync(
           {
             $push: {
               orderHistory: {
-                order: newOrder._id,
-                totalPrice: newOrder.totalPrice,
-                status: newOrder.status,
-                createdAt: newOrder.createdAt,
+                order: savedOrder._id,
+                totalPrice: savedOrder.totalPrice,
+                status: savedOrder.status,
+                createdAt: savedOrder.createdAt,
               },
             },
+            $set: { cart: [] },
           },
           { session }
         );
 
-        return newOrder; // This is returned by session.withTransaction
-        // --- END OF TRANSACTION LOGIC ---
+        return savedOrder;
       });
 
-      // If the transaction was successful, 'createdOrder' will be defined
-      if (createdOrder) {
-        // Populate user details for the response outside the transaction
-        await createdOrder.populate("user", "name email");
+      // Populate user after transaction
+      await createdOrder!.populate("user", "name email");
 
-        res.status(201).json({
-          status: "success",
-          message: "Order created successfully",
-          data: { order: createdOrder },
-        });
-      } else {
-        // This case should ideally not be reached if an error isn't thrown
-        throw new Error("Order creation failed after transaction.");
-      }
+      res.status(201).json({
+        status: "success",
+        message: "Order created successfully",
+        data: { order: createdOrder },
+      });
     } catch (error: any) {
-      // The catch block handles any error thrown inside the transaction
       return res.status(400).json({
         status: "error",
         message: error.message || "Failed to create order",
       });
     } finally {
-      // 4. End the session
       await session.endSession();
     }
   }
@@ -201,42 +279,45 @@ export const createOrder = catchAsync(
 export const getOrderById = catchAsync(
   async (req: AuthRequest, res: Response) => {
     if (!req.user?._id) {
-      return res.status(401).json({ message: "Not authorized" });
+      return res.status(401).json({
+        status: "error",
+        message: "Not authorized",
+      });
     }
 
-    let order;
     const { id } = req.params;
+    let order;
 
-    // Check if ID is MongoDB ObjectId or order number
-    if (mongoose.Types.ObjectId.isValid(id)) {
-      order = await Order.findById(id).populate<{ user: PopulatedUser }>(
-        "user",
-        "name email"
-      );
+    // Check if it's a valid ObjectId or order number
+    if (mongoose.Types.ObjectId.isValid(id) && id.length === 24) {
+      order = await Order.findById(id)
+        .populate<{ user: PopulatedUser }>("user", "name email")
+        .populate("orderItems.product", "name slug mainImage");
     } else {
-      // Search by order number
-      order = await Order.findOne({ orderNumber: id }).populate<{
-        user: PopulatedUser;
-      }>("user", "name email");
+      order = await Order.findOne({ orderNumber: id.toUpperCase() })
+        .populate<{ user: PopulatedUser }>("user", "name email")
+        .populate("orderItems.product", "name slug mainImage");
     }
 
     if (!order) {
-      return res.status(404).json({ message: "Order not found" });
+      return res.status(404).json({
+        status: "error",
+        message: "Order not found",
+      });
     }
 
-    // Check if order belongs to user or user is admin
-    if (
-      order.user._id.toString() !== req.user._id.toString() &&
-      req.user.role !== "admin"
-    ) {
-      return res
-        .status(403)
-        .json({ message: "Not authorized to access this order" });
+    // Check authorization
+    const orderUserId = order.user._id.toString();
+    if (orderUserId !== req.user._id.toString() && req.user.role !== "admin") {
+      return res.status(403).json({
+        status: "error",
+        message: "Not authorized to access this order",
+      });
     }
 
     res.status(200).json({
       status: "success",
-      data: order,
+      data: { order },
     });
   }
 );
@@ -249,42 +330,72 @@ export const getOrderById = catchAsync(
 export const updateOrderToPaid = catchAsync(
   async (req: AuthRequest, res: Response) => {
     if (!req.user?._id) {
-      return res.status(401).json({ message: "Not authorized" });
+      return res.status(401).json({
+        status: "error",
+        message: "Not authorized",
+      });
     }
 
     const order = await Order.findById(req.params.id);
 
     if (!order) {
-      return res.status(404).json({ message: "Order not found" });
+      return res.status(404).json({
+        status: "error",
+        message: "Order not found",
+      });
     }
 
-    // Update order
+    // Check authorization
+    const orderUserId = order.user.toString();
+    if (orderUserId !== req.user._id.toString() && req.user.role !== "admin") {
+      return res.status(403).json({
+        status: "error",
+        message: "Not authorized to modify this order",
+      });
+    }
+
+    // Check if already paid
+    if (order.isPaid) {
+      return res.status(400).json({
+        status: "error",
+        message: "Order is already paid",
+      });
+    }
+
+    // Check if order is cancelled
+    if (order.status === "cancelled") {
+      return res.status(400).json({
+        status: "error",
+        message: "Cannot pay for cancelled order",
+      });
+    }
+
+    // Update payment info
     order.isPaid = true;
     order.paidAt = new Date();
     order.status = "processing";
 
-    // Add payment result
     order.paymentResult = {
-      id: req.body.id,
-      status: req.body.status,
-      update_time: req.body.update_time,
-      email_address: req.body.email_address,
+      id: req.body.id || "",
+      status: req.body.status || "completed",
+      update_time: req.body.update_time || new Date().toISOString(),
+      email_address: req.body.email_address || req.user.email,
       paymentMethod: req.body.payment_method,
       transactionFee: req.body.transaction_fee,
     };
 
-    // Update status history
     order.statusHistory.push({
-      status: order.status,
+      status: "processing",
       date: new Date(),
-      note: "Payment received, order processing",
+      note: "Payment received and verified",
     });
 
     const updatedOrder = await order.save();
 
     res.status(200).json({
       status: "success",
-      data: updatedOrder,
+      message: "Payment updated successfully",
+      data: { order: updatedOrder },
     });
   }
 );
@@ -297,81 +408,95 @@ export const updateOrderToPaid = catchAsync(
 export const updateOrderStatus = catchAsync(
   async (req: AuthRequest, res: Response) => {
     if (!req.user?._id || req.user.role !== "admin") {
-      return res.status(401).json({ message: "Not authorized" });
+      return res.status(403).json({
+        status: "error",
+        message: "Not authorized",
+      });
     }
 
     const order = await Order.findById(req.params.id);
 
     if (!order) {
-      return res.status(404).json({ message: "Order not found" });
+      return res.status(404).json({
+        status: "error",
+        message: "Order not found",
+      });
     }
 
-    const { status, note } = req.body;
+    const { status, note, adminNotes } = req.body;
 
-    // Validate status
-    const validStatuses: OrderStatus[] = [
-      "pending",
-      "processing",
-      "shipped",
-      "delivered",
-      "cancelled",
-      "refunded",
-      "on-hold",
-      "failed",
-      "completed",
-    ];
+    // Validate status transitions
+    const invalidTransitions: Record<string, string[]> = {
+      completed: ["pending", "processing", "shipped"],
+      cancelled: ["shipped", "delivered", "completed"],
+      refunded: ["pending", "processing"],
+    };
 
-    if (!validStatuses.includes(status as OrderStatus)) {
-      return res.status(400).json({ message: "Invalid status" });
+    if (invalidTransitions[status]?.includes(order.status)) {
+      return res.status(400).json({
+        status: "error",
+        message: `Cannot change status from ${order.status} to ${status}`,
+      });
     }
 
-    // Update order status
+    // Prevent changing completed/cancelled orders
+    if (
+      ["completed", "cancelled"].includes(order.status) &&
+      order.status !== status
+    ) {
+      return res.status(400).json({
+        status: "error",
+        message: `Cannot modify ${order.status} order`,
+      });
+    }
+
+    const oldStatus = order.status;
     order.status = status as OrderStatus;
 
-    // Add status history entry
+    // Add to status history
     order.statusHistory.push({
       status: status as OrderStatus,
       date: new Date(),
-      note: note || `Status updated to ${status}`,
+      note: note || `Status changed from ${oldStatus} to ${status}`,
     });
 
     // Handle specific status changes
-    if (status === "delivered") {
+    if (status === "delivered" && !order.isDelivered) {
       order.isDelivered = true;
       order.deliveredAt = new Date();
-    } else if (status === "shipped") {
-      // Update shipping info if provided
-      if (req.body.carrier) {
-        order.shipping = {
-          ...order.shipping,
-          carrier: req.body.carrier,
-          trackingNumber: req.body.trackingNumber,
-          estimatedDeliveryDate: req.body.estimatedDeliveryDate
-            ? new Date(req.body.estimatedDeliveryDate)
-            : undefined,
-          shippedAt: new Date(),
-        };
-      }
-    } else if (status === "refunded" && req.body.refundAmount) {
-      // Add refund information
+    }
+
+    if (status === "shipped" && req.body.shippingInfo) {
+      order.shipping = {
+        ...order.shipping,
+        carrier: req.body.shippingInfo.carrier,
+        trackingNumber: req.body.shippingInfo.trackingNumber,
+        estimatedDeliveryDate: req.body.shippingInfo.estimatedDeliveryDate
+          ? new Date(req.body.shippingInfo.estimatedDeliveryDate)
+          : undefined,
+        shippedAt: new Date(),
+      };
+    }
+
+    if (status === "refunded" && req.body.refund) {
       order.refund = {
-        amount: Number(req.body.refundAmount),
-        reason: req.body.refundReason || "Customer request",
+        amount: Number(req.body.refund.amount),
+        reason: req.body.refund.reason || "Refund processed",
         date: new Date(),
         status: "processed",
       };
     }
 
-    // Add admin notes if provided
-    if (req.body.adminNotes) {
-      order.adminNotes = req.body.adminNotes;
+    if (adminNotes) {
+      order.adminNotes = adminNotes;
     }
 
     const updatedOrder = await order.save();
 
     res.status(200).json({
       status: "success",
-      data: updatedOrder,
+      message: "Order status updated successfully",
+      data: { order: updatedOrder },
     });
   }
 );
@@ -384,83 +509,97 @@ export const updateOrderStatus = catchAsync(
 export const updateOrderToDelivered = catchAsync(
   async (req: AuthRequest, res: Response) => {
     if (!req.user?._id || req.user.role !== "admin") {
-      return res.status(401).json({ message: "Not authorized" });
+      return res.status(403).json({
+        status: "error",
+        message: "Not authorized",
+      });
     }
 
     const order = await Order.findById(req.params.id);
 
     if (!order) {
-      return res.status(404).json({ message: "Order not found" });
+      return res.status(404).json({
+        status: "error",
+        message: "Order not found",
+      });
     }
 
-    // Update order
+    if (order.status === "cancelled") {
+      return res.status(400).json({
+        status: "error",
+        message: "Cannot deliver cancelled order",
+      });
+    }
+
+    if (order.isDelivered) {
+      return res.status(400).json({
+        status: "error",
+        message: "Order already delivered",
+      });
+    }
+
     order.isDelivered = true;
     order.deliveredAt = new Date();
     order.status = "delivered";
 
-    // Update status history
     order.statusHistory.push({
       status: "delivered",
       date: new Date(),
-      note: req.body.note || "Order delivered",
+      note: req.body.note || "Order successfully delivered",
     });
 
     const updatedOrder = await order.save();
 
     res.status(200).json({
       status: "success",
-      data: updatedOrder,
+      message: "Order marked as delivered",
+      data: { order: updatedOrder },
     });
   }
 );
 
 /**
- * @desc    Get logged in user's orders with filtering, sorting, and pagination.
+ * @desc    Get logged in user's orders
  * @route   GET /api/orders/myorders
  * @access  Private
  */
 export const getMyOrders = catchAsync(
   async (req: AuthRequest, res: Response) => {
-    // 1. Ensure the user is authenticated
     if (!req.user?._id) {
       return res.status(401).json({
         status: "error",
-        message: "Not authorized. Please log in.",
+        message: "Not authorized",
       });
     }
 
-    // 2. Create the base filter to only include orders for the logged-in user
-    const initialFilter: FilterQuery<OrderDocument> = { user: req.user._id };
+    const initialFilter: FilterQuery<OrderDocument> = {
+      user: req.user._id,
+    };
 
-    // 3. Initialize the Mongoose query with the base filter
-    const orderQuery = Order.find(initialFilter);
+    const orderQuery = Order.find(initialFilter).populate(
+      "orderItems.product",
+      "name mainImage slug"
+    );
 
-    // 4. Instantiate and chain the generic APIFeatures class to apply
-    //    additional filtering (e.g., ?status=pending), sorting, and pagination
-    //    from the request's query string (req.query).
     const features = new APIFeatures(orderQuery, req.query)
       .filter()
       .sort()
       .limitFields()
       .paginate();
 
-    // 5. Execute both the main query (for paginated data) and the count query in parallel
-    //    for better performance.
     const [orders, total] = await Promise.all([
       features.query,
-      features.getTotalCount(), // Gets the total count matching the filters, ignoring pagination
+      features.getTotalCount(),
     ]);
 
-    // 6. Calculate pagination metadata needed by the frontend
     const page = parseInt(String(req.query.page), 10) || 1;
     const limit = parseInt(String(req.query.limit), 10) || 10;
     const totalPages = Math.ceil(total / limit);
 
-    // 7. Send the structured, nested response that the frontend expects
     res.status(200).json({
       status: "success",
       data: {
-        orders: orders,
+        orders,
         pagination: {
           page,
           limit,
@@ -473,61 +612,54 @@ export const getMyOrders = catchAsync(
 );
 
 /**
- * @desc    Get all orders with filtering, sorting, and pagination (Admin only)
+ * @desc    Get all orders (Admin)
  * @route   GET /api/orders
  * @access  Private/Admin
  */
 export const getOrders = catchAsync(async (req: AuthRequest, res: Response) => {
-  // 1. Authorization check
   if (req.user?.role !== "admin") {
-    // Note: The 'admin' middleware already handles this, but it's good practice for clarity.
     return res.status(403).json({
       status: "error",
-      message: "Forbidden: You do not have permission to perform this action.",
+      message: "Not authorized",
     });
   }
 
-  // 2. (Optional) Add any initial filters if needed. For admin, it's usually empty.
   const initialFilter: FilterQuery<OrderDocument> = {};
 
-  // If you want to enable a 'keyword' search for admins, you'd add it here:
+  // Handle keyword search
   if (req.query.keyword && typeof req.query.keyword === "string") {
     const keyword = req.query.keyword;
     initialFilter.$or = [
       { orderNumber: { $regex: keyword, $options: "i" } },
-      { "user.name": { $regex: keyword, $options: "i" } }, // Assuming user is populated
-      { "user.email": { $regex: keyword, $options: "i" } },
+      { "shippingAddress.address": { $regex: keyword, $options: "i" } },
+      { "shippingAddress.city": { $regex: keyword, $options: "i" } },
     ];
-    // Don't forget to delete the keyword from req.query so APIFeatures doesn't process it
     delete req.query.keyword;
   }
 
-  // 3. Initialize the Mongoose query. Populate user data for the admin view.
-  const orderQuery = Order.find(initialFilter).populate("user", "name email");
+  const orderQuery = Order.find(initialFilter)
+    .populate("user", "name email")
+    .populate("orderItems.product", "name mainImage");
 
-  // 4. Chain the generic APIFeatures to apply filtering, sorting, etc.
   const features = new APIFeatures(orderQuery, req.query)
     .filter()
     .sort()
     .limitFields()
     .paginate();
 
-  // 5. Execute queries in parallel
   const [orders, total] = await Promise.all([
     features.query,
     features.getTotalCount(),
   ]);
 
-  // 6. Calculate pagination metadata
   const page = parseInt(String(req.query.page), 10) || 1;
-  const limit = parseInt(String(req.query.limit), 10) || 15; // Using the admin page limit
+  const limit = parseInt(String(req.query.limit), 10) || 15;
   const totalPages = Math.ceil(total / limit);
 
-  // 7. Send the structured, nested response that the frontend expects
   res.status(200).json({
     status: "success",
     data: {
-      orders: orders,
+      orders,
       pagination: {
         page,
         limit,
@@ -539,25 +671,30 @@ export const getOrders = catchAsync(async (req: AuthRequest, res: Response) => {
 });
 
 /**
- * @desc    Add tracking information to order
+ * @desc    Add tracking information
  * @route   PUT /api/orders/:id/tracking
  * @access  Private/Admin
  */
 export const addTrackingInfo = catchAsync(
   async (req: AuthRequest, res: Response) => {
     if (!req.user?._id || req.user.role !== "admin") {
-      return res.status(401).json({ message: "Not authorized" });
+      return res.status(403).json({
+        status: "error",
+        message: "Not authorized",
+      });
     }
 
     const order = await Order.findById(req.params.id);
 
     if (!order) {
-      return res.status(404).json({ message: "Order not found" });
+      return res.status(404).json({
+        status: "error",
+        message: "Order not found",
+      });
     }
 
     const { carrier, trackingNumber, estimatedDeliveryDate } = req.body;
 
-    // Update shipping info
     order.shipping = {
       carrier,
       trackingNumber,
@@ -567,15 +704,13 @@ export const addTrackingInfo = catchAsync(
       shippedAt: new Date(),
     };
 
-    // Update order status if it's not already shipped or beyond
-    if (order.status === "pending" || order.status === "processing") {
+    // Update status if needed
+    if (["pending", "processing"].includes(order.status)) {
       order.status = "shipped";
-
-      // Add to status history
       order.statusHistory.push({
         status: "shipped",
         date: new Date(),
-        note: `Order shipped via ${carrier}, tracking #${trackingNumber}`,
+        note: `Shipped via ${carrier}, tracking: ${trackingNumber}`,
       });
     }
 
@@ -583,7 +718,8 @@ export const addTrackingInfo = catchAsync(
 
     res.status(200).json({
       status: "success",
-      data: updatedOrder,
+      message: "Tracking information added",
+      data: { order: updatedOrder },
     });
   }
 );
@@ -595,25 +731,24 @@ export const addTrackingInfo = catchAsync(
  */
 export const cancelOrder = catchAsync(
   async (req: AuthRequest, res: Response) => {
-    // 1. Authenticate user
     if (!req.user?._id) {
-      return res.status(401).json({ message: "Not authorized" });
+      return res.status(401).json({
+        status: "error",
+        message: "Not authorized",
+      });
     }
 
-    // 2. Start a database session
     const session = await mongoose.startSession();
 
     try {
-      // 3. Execute logic within a transaction
       const updatedOrder = await session.withTransaction(async () => {
-        // --- START OF TRANSACTION LOGIC ---
         const order = await Order.findById(req.params.id).session(session);
 
         if (!order) {
           throw new Error("Order not found");
         }
 
-        // Verify user is the owner or an admin
+        // Check authorization
         const orderUserId = order.user.toString();
         if (
           orderUserId !== req.user!._id.toString() &&
@@ -622,77 +757,95 @@ export const cancelOrder = catchAsync(
           throw new Error("Not authorized to cancel this order");
         }
 
-        // Check if the order is in a cancellable state
+        // Check if cancellable
         if (!["pending", "processing"].includes(order.status)) {
-          throw new Error(
-            "Cannot cancel order. It has already been shipped or completed."
-          );
+          throw new Error(`Cannot cancel order with status: ${order.status}`);
         }
 
-        // Restore inventory for each item in the order
+        // Restore stock
         for (const item of order.orderItems) {
           if (item.variation?.sku) {
-            // Restore variation stock
-            await Product.updateOne(
-              { _id: item.product, "variations.sku": item.variation.sku },
-              { $inc: { "variations.$.countInStock": item.quantity } },
+            const result = await Product.updateOne(
+              {
+                _id: item.product,
+                "variations.sku": item.variation.sku,
+              },
+              {
+                $inc: { "variations.$.countInStock": item.quantity },
+              },
               { session }
             );
+
+            if (result.matchedCount === 0) {
+              throw new Error(
+                `Failed to restore stock for variation ${item.variation.sku}`
+              );
+            }
           } else {
-            // Restore main product stock
-            await Product.updateOne(
+            const result = await Product.updateOne(
               { _id: item.product },
-              { $inc: { countInStock: item.quantity } },
+              {
+                $inc: { countInStock: item.quantity },
+              },
               { session }
             );
+
+            if (result.matchedCount === 0) {
+              throw new Error(
+                `Failed to restore stock for product ${item.product}`
+              );
+            }
           }
         }
 
-        // Update the order status
         order.status = "cancelled";
         order.statusHistory.push({
           status: "cancelled",
           date: new Date(),
-          note: req.body.reason || "Cancelled by user",
+          note: req.body.reason || "Order cancelled by user",
         });
 
         await order.save({ session });
-        return order; // This is returned by session.withTransaction
-        // --- END OF TRANSACTION LOGIC ---
+        return order;
       });
 
       res.status(200).json({
         status: "success",
-        data: updatedOrder,
+        message: "Order cancelled successfully",
+        data: { order: updatedOrder },
       });
     } catch (error: any) {
-      // The catch block handles any error thrown inside the transaction
       return res.status(400).json({
         status: "error",
         message: error.message || "Failed to cancel order",
       });
     } finally {
-      // 4. End the session
       await session.endSession();
     }
   }
 );
 
 /**
- * @desc    Search orders by order number, address, city
+ * @desc    Search orders
  * @route   GET /api/orders/search
  * @access  Private/Admin
  */
 export const searchOrders = catchAsync(
   async (req: AuthRequest, res: Response) => {
     if (!req.user?._id || req.user.role !== "admin") {
-      return res.status(401).json({ message: "Not authorized" });
+      return res.status(403).json({
+        status: "error",
+        message: "Not authorized",
+      });
     }
 
     const { q } = req.query;
 
     if (!q || typeof q !== "string") {
-      return res.status(400).json({ message: "Search query required" });
+      return res.status(400).json({
+        status: "error",
+        message: "Search query required",
+      });
     }
 
     const searchQuery = {
@@ -700,198 +853,367 @@ export const searchOrders = catchAsync(
         { orderNumber: { $regex: q, $options: "i" } },
         { "shippingAddress.address": { $regex: q, $options: "i" } },
         { "shippingAddress.city": { $regex: q, $options: "i" } },
+        { "shippingAddress.postalCode": { $regex: q, $options: "i" } },
         { "orderItems.name": { $regex: q, $options: "i" } },
       ],
     };
 
     const orders = await Order.find(searchQuery)
       .populate("user", "name email")
+      .populate("orderItems.product", "name mainImage")
       .sort({ createdAt: -1 })
       .limit(20);
 
     res.status(200).json({
       status: "success",
       results: orders.length,
-      data: orders,
+      data: { orders },
     });
   }
 );
 
 /**
- * @desc    Get order analytics for admin dashboard
+ * @desc    Get order analytics
  * @route   GET /api/orders/analytics
  * @access  Private/Admin
  */
 export const getOrderAnalytics = catchAsync(
   async (req: AuthRequest, res: Response) => {
     if (!req.user?._id || req.user.role !== "admin") {
-      return res.status(401).json({ message: "Not authorized" });
+      return res.status(403).json({
+        status: "error",
+        message: "Not authorized",
+      });
     }
 
-    const [statusCounts, monthlyRevenue, recentOrders, totalRevenue] =
-      await Promise.all([
-        // Order status distribution
-        Order.aggregate([{ $group: { _id: "$status", count: { $sum: 1 } } }]),
+    const now = new Date();
+    const last24Hours = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const last30Days = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const last12Months = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
 
-        // Monthly revenue for last 12 months
-        Order.aggregate([
-          {
-            $match: {
-              isPaid: true,
-              createdAt: {
-                $gte: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000),
+    const [
+      statusCounts,
+      monthlyRevenue,
+      recentOrdersCount,
+      totalRevenue,
+      last24HoursStats,
+      last30DaysStats,
+      topProducts,
+    ] = await Promise.all([
+      // Status distribution
+      Order.aggregate([{ $group: { _id: "$status", count: { $sum: 1 } } }]),
+
+      // Monthly revenue for last 12 months
+      Order.aggregate([
+        {
+          $match: {
+            isPaid: true,
+            createdAt: { $gte: last12Months },
+          },
+        },
+        {
+          $group: {
+            _id: {
+              year: { $year: "$createdAt" },
+              month: { $month: "$createdAt" },
+            },
+            revenue: { $sum: "$totalPrice" },
+            orders: { $sum: 1 },
+            averageOrderValue: { $avg: "$totalPrice" },
+          },
+        },
+        { $sort: { "_id.year": 1, "_id.month": 1 } },
+      ]),
+
+      // Recent orders (last 24 hours)
+      Order.countDocuments({ createdAt: { $gte: last24Hours } }),
+
+      // Total revenue (all time)
+      Order.aggregate([
+        { $match: { isPaid: true } },
+        { $group: { _id: null, total: { $sum: "$totalPrice" } } },
+      ]),
+
+      // Last 24 hours stats - FIXED: Only count paid orders
+      Order.aggregate([
+        {
+          $match: {
+            createdAt: { $gte: last24Hours },
+            isPaid: true,
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            orders: { $sum: 1 },
+            revenue: { $sum: "$totalPrice" },
+          },
+        },
+      ]),
+
+      // Last 30 days stats - FIXED: Calculate average only from paid orders
+      Order.aggregate([
+        {
+          $match: {
+            createdAt: { $gte: last30Days },
+            isPaid: true,
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            orders: { $sum: 1 },
+            revenue: { $sum: "$totalPrice" },
+            averageOrderValue: { $avg: "$totalPrice" },
+          },
+        },
+      ]),
+
+      // Top selling products - FIXED: Only from paid, non-cancelled orders
+      Order.aggregate([
+        {
+          $match: {
+            status: { $nin: ["cancelled", "failed"] },
+            isPaid: true,
+          },
+        },
+        { $unwind: "$orderItems" },
+        {
+          $group: {
+            _id: "$orderItems.product",
+            totalQuantity: { $sum: "$orderItems.quantity" },
+            totalRevenue: {
+              $sum: {
+                $multiply: ["$orderItems.quantity", "$orderItems.price"],
               },
             },
+            orderCount: { $sum: 1 },
+            productName: { $first: "$orderItems.name" },
           },
-          {
-            $group: {
-              _id: {
-                year: { $year: "$createdAt" },
-                month: { $month: "$createdAt" },
-              },
-              revenue: { $sum: "$totalPrice" },
-              orders: { $sum: 1 },
-            },
-          },
-          { $sort: { "_id.year": -1, "_id.month": -1 } },
-        ]),
-
-        // Recent orders count (last 24 hours)
-        Order.countDocuments({
-          createdAt: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
-        }),
-
-        // Total revenue
-        Order.aggregate([
-          { $match: { isPaid: true } },
-          { $group: { _id: null, total: { $sum: "$totalPrice" } } },
-        ]),
-      ]);
+        },
+        { $sort: { totalQuantity: -1 } },
+        { $limit: 10 },
+      ]),
+    ]);
 
     res.status(200).json({
       status: "success",
       data: {
-        statusCounts,
+        overview: {
+          totalOrders: statusCounts.reduce((sum, s) => sum + s.count, 0),
+          totalRevenue: totalRevenue[0]?.total || 0,
+          recentOrdersCount,
+        },
+        statusDistribution: statusCounts.reduce((acc: any, item) => {
+          acc[item._id] = item.count;
+          return acc;
+        }, {}),
+        last24Hours: last24HoursStats[0] || { orders: 0, revenue: 0 },
+        last30Days: last30DaysStats[0] || {
+          orders: 0,
+          revenue: 0,
+          averageOrderValue: 0,
+        },
         monthlyRevenue,
-        recentOrdersCount: recentOrders,
-        totalRevenue: totalRevenue[0]?.total || 0,
+        topProducts,
       },
     });
   }
 );
 
 /**
- * @desc    Export orders for reporting
+ * @desc    Export orders
  * @route   GET /api/orders/export
  * @access  Private/Admin
  */
 export const exportOrders = catchAsync(
   async (req: AuthRequest, res: Response) => {
     if (!req.user?._id || req.user.role !== "admin") {
-      return res.status(401).json({ message: "Not authorized" });
+      return res.status(403).json({
+        status: "error",
+        message: "Not authorized",
+      });
     }
 
     const { startDate, endDate, status } = req.query;
 
     const query: any = {};
-    if (startDate) query.createdAt = { $gte: new Date(startDate as string) };
-    if (endDate)
-      query.createdAt = {
-        ...query.createdAt,
-        $lte: new Date(endDate as string),
-      };
-    if (status) query.status = status;
+
+    if (startDate || endDate) {
+      query.createdAt = {};
+      if (startDate) {
+        query.createdAt.$gte = new Date(startDate as string);
+      }
+      if (endDate) {
+        query.createdAt.$lte = new Date(endDate as string);
+      }
+    }
+
+    if (status) {
+      query.status = status;
+    }
 
     const orders = await Order.find(query)
-      .populate("user", "name email")
-      .sort({ createdAt: -1 });
+      .populate("user", "name email phone")
+      .populate("orderItems.product", "name sku")
+      .sort({ createdAt: -1 })
+      .lean();
 
-    // Format for CSV export
-    const csvData = orders.map((order) => ({
+    // Format for export
+    const exportData = orders.map((order: any) => ({
       orderNumber: order.orderNumber,
-      customerName: (order.user as any)?.name,
-      customerEmail: (order.user as any)?.email,
+      orderDate: new Date(order.createdAt).toISOString(),
+      customerName: order.user?.name || "N/A",
+      customerEmail: order.user?.email || "N/A",
+      customerPhone: order.user?.phone || "N/A",
       status: order.status,
-      itemsPrice: order.itemsPrice,
-      taxPrice: order.taxPrice,
-      shippingPrice: order.shippingPrice,
-      totalPrice: order.totalPrice,
-      isPaid: order.isPaid,
-      isDelivered: order.isDelivered,
-      createdAt: order.createdAt.toISOString(),
-      paidAt: order.paidAt?.toISOString() || "",
-      deliveredAt: order.deliveredAt?.toISOString() || "",
-      shippingAddress: `${order.shippingAddress.address}, ${order.shippingAddress.city}, ${order.shippingAddress.postalCode}, ${order.shippingAddress.country}`,
       paymentMethod: order.paymentMethod,
+      itemsCount: order.orderItems.length,
+      subtotal: order.subtotal.toFixed(2),
+      tax: order.taxPrice.toFixed(2),
+      shipping: order.shippingPrice.toFixed(2),
+      discount: order.discountAmount.toFixed(2),
+      total: order.totalPrice.toFixed(2),
+      isPaid: order.isPaid,
+      paidAt: order.paidAt ? new Date(order.paidAt).toISOString() : "",
+      isDelivered: order.isDelivered,
+      deliveredAt: order.deliveredAt
+        ? new Date(order.deliveredAt).toISOString()
+        : "",
+      shippingAddress: [
+        order.shippingAddress.address,
+        order.shippingAddress.city,
+        order.shippingAddress.postalCode,
+        order.shippingAddress.country,
+      ].join(", "),
       trackingNumber: order.shipping?.trackingNumber || "",
       carrier: order.shipping?.carrier || "",
+      notes: order.notes || "",
+      adminNotes: order.adminNotes || "",
     }));
 
     res.status(200).json({
       status: "success",
-      count: csvData.length,
-      data: csvData,
+      count: exportData.length,
+      data: { orders: exportData },
     });
   }
 );
 
 /**
- * @desc    Get order statistics for a specific user
+ * @desc    Get user order statistics
  * @route   GET /api/orders/user-stats
  * @access  Private
  */
 export const getUserOrderStats = catchAsync(
   async (req: AuthRequest, res: Response) => {
     if (!req.user?._id) {
-      return res.status(401).json({ message: "Not authorized" });
+      return res.status(401).json({
+        status: "error",
+        message: "Not authorized",
+      });
     }
 
-    const userId = req.user._id;
+    const userId = new mongoose.Types.ObjectId(req.user._id);
 
-    const [orderStats, recentOrders] = await Promise.all([
+    const [orderStats, recentOrders, statusBreakdown] = await Promise.all([
+      // Overall statistics - FIXED: Calculate from paid orders only
       Order.aggregate([
-        { $match: { user: new mongoose.Types.ObjectId(userId) } },
+        { $match: { user: userId } },
         {
-          $group: {
-            _id: null,
-            totalOrders: { $sum: 1 },
-            totalSpent: { $sum: "$totalPrice" },
-            averageOrderValue: { $avg: "$totalPrice" },
-            statusBreakdown: {
-              $push: "$status",
-            },
+          $facet: {
+            overall: [
+              {
+                $group: {
+                  _id: null,
+                  totalOrders: { $sum: 1 },
+                  paidOrdersCount: {
+                    $sum: { $cond: [{ $eq: ["$isPaid", true] }, 1, 0] },
+                  },
+                  totalSpent: {
+                    $sum: {
+                      $cond: [{ $eq: ["$isPaid", true] }, "$totalPrice", 0],
+                    },
+                  },
+                  completedOrders: {
+                    $sum: { $cond: [{ $eq: ["$status", "completed"] }, 1, 0] },
+                  },
+                  cancelledOrders: {
+                    $sum: { $cond: [{ $eq: ["$status", "cancelled"] }, 1, 0] },
+                  },
+                  pendingOrders: {
+                    $sum: { $cond: [{ $eq: ["$status", "pending"] }, 1, 0] },
+                  },
+                  processingOrders: {
+                    $sum: { $cond: [{ $eq: ["$status", "processing"] }, 1, 0] },
+                  },
+                  shippedOrders: {
+                    $sum: { $cond: [{ $eq: ["$status", "shipped"] }, 1, 0] },
+                  },
+                },
+              },
+            ],
+            paidOrders: [
+              { $match: { isPaid: true } },
+              {
+                $group: {
+                  _id: null,
+                  averageOrderValue: { $avg: "$totalPrice" },
+                  totalPaidAmount: { $sum: "$totalPrice" },
+                },
+              },
+            ],
           },
         },
       ]),
 
+      // Recent orders
       Order.find({ user: userId })
         .sort({ createdAt: -1 })
         .limit(5)
-        .select("orderNumber status totalPrice createdAt"),
+        .select("orderNumber status totalPrice createdAt isPaid isDelivered")
+        .lean(),
+
+      // Status breakdown
+      Order.aggregate([
+        { $match: { user: userId } },
+        { $group: { _id: "$status", count: { $sum: 1 } } },
+      ]),
     ]);
 
-    const stats = orderStats[0] || {
+    const overallStats = orderStats[0]?.overall[0] || {
       totalOrders: 0,
+      paidOrdersCount: 0,
       totalSpent: 0,
-      averageOrderValue: 0,
-      statusBreakdown: [],
+      completedOrders: 0,
+      cancelledOrders: 0,
+      pendingOrders: 0,
+      processingOrders: 0,
+      shippedOrders: 0,
     };
 
-    // Count status occurrences
-    const statusCounts = stats.statusBreakdown.reduce(
-      (acc: any, status: string) => {
-        acc[status] = (acc[status] || 0) + 1;
-        return acc;
-      },
-      {}
-    );
+    const paidStats = orderStats[0]?.paidOrders[0] || {
+      averageOrderValue: 0,
+      totalPaidAmount: 0,
+    };
+
+    const statusCounts = statusBreakdown.reduce((acc: any, item) => {
+      acc[item._id] = item.count;
+      return acc;
+    }, {});
 
     res.status(200).json({
       status: "success",
       data: {
-        totalOrders: stats.totalOrders,
-        totalSpent: stats.totalSpent,
-        averageOrderValue: stats.averageOrderValue,
+        totalOrders: overallStats.totalOrders,
+        totalSpent: overallStats.totalSpent,
+        averageOrderValue: paidStats.averageOrderValue || 0,
+        completedOrders: overallStats.completedOrders,
+        cancelledOrders: overallStats.cancelledOrders,
+        pendingOrders: overallStats.pendingOrders,
+        processingOrders: overallStats.processingOrders,
+        shippedOrders: overallStats.shippedOrders,
+        paidOrdersCount: overallStats.paidOrdersCount,
         statusCounts,
         recentOrders,
       },

@@ -2,9 +2,14 @@ import cors from "cors";
 import express from "express";
 import helmet from "helmet";
 import morgan from "morgan";
+import path from "path";
 import config from "./config/config";
 import connectDB from "./config/db";
-import { errorHandler, notFound } from "./middleware/errorMiddleware";
+import {
+  errorHandler,
+  handleUploadError,
+  notFound,
+} from "./middleware/errorMiddleware";
 import authRoutes from "./routes/authRoutes";
 import brandRoutes from "./routes/brandRoutes";
 import categoryRoutes from "./routes/categoryRoutes";
@@ -20,10 +25,16 @@ connectDB();
 const app = express();
 
 // Middleware
+// Middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
 app.use(cors());
-app.use(helmet());
+
+app.use(helmet.crossOriginResourcePolicy({ policy: "cross-origin" }));
+
+// Serve static files from uploads directory
+app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
 
 // Logging
 if (config.env === "development") {
@@ -48,8 +59,12 @@ app.use("/api/v1/categories", categoryRoutes);
 app.use("/api/v1/brands", brandRoutes);
 app.use("/api/v1/reviews", reviewRoutes);
 
-// Error Middleware
+// Error Middleware (ORDER MATTERS!)
+// 1. Handle upload errors first
+app.use(handleUploadError);
+// 2. Handle 404 errors
 app.use(notFound);
+// 3. Handle all other errors
 app.use(errorHandler);
 
 // Start server

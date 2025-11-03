@@ -1,121 +1,12 @@
-import crypto from "crypto";
 import { Request, Response } from "express";
+import Order from "../models/orderModel";
 import Product from "../models/productModel";
 import User from "../models/userModel";
 import { Address, AuthRequest, UserDocument } from "../types/user.types";
 import APIFeatures from "../utils/apiFeatures";
 import catchAsync from "../utils/catchAsync";
-import {
-  sendPasswordResetEmail,
-  sendVerificationEmail,
-} from "../utils/emailService";
 import generateToken from "../utils/generateToken";
-import Order from "../models/orderModel";
-import config from "../config/config";
-
-/**
- * @desc    Auth user & get token
- * @route   POST /api/users/login
- * @access  Public
- */
-export const loginUser = catchAsync(async (req: Request, res: Response) => {
-  const { email, password } = req.body;
-
-  const user = (await User.findOne({ email }).select(
-    "+password"
-  )) as UserDocument | null;
-
-  if (!user) {
-    return res.status(401).json({ message: "Invalid email or password" });
-  }
-
-  const isMatch = await user.comparePassword(password);
-
-  if (!isMatch) {
-    return res.status(401).json({ message: "Invalid email or password" });
-  }
-
-  res.status(200).json({
-    status: "success",
-    data: {
-      _id: user._id,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      isEmailVerified: user.isEmailVerified,
-      token: generateToken(user._id),
-    },
-  });
-});
-
-/**
- * @desc    Register a new user
- * @route   POST /api/users
- * @access  Public
- */
-export const registerUser = catchAsync(async (req: Request, res: Response) => {
-  const { name, email, password, phone } = req.body;
-
-  // Check if user exists
-  const userExists = await User.findOne({ email });
-
-  if (userExists) {
-    return res.status(400).json({ message: "User already exists" });
-  }
-
-  // Create new user
-  const user = (await User.create({
-    name,
-    email,
-    password,
-    phone,
-  })) as UserDocument;
-
-  // Generate email verification token
-  const verificationToken = user.createEmailVerificationToken();
-  await user.save({ validateBeforeSave: false });
-
-  // Create verification URL
-  const verificationURL = `${config.frontendBaseUrl}/verify-email/${verificationToken}`;
-
-  try {
-    // Send verification email
-    await sendVerificationEmail(user.email, user.name, verificationURL);
-
-    res.status(201).json({
-      status: "success",
-      data: {
-        _id: user._id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        isEmailVerified: user.isEmailVerified,
-        token: generateToken(user._id),
-      },
-      // In a real application, you would remove the following line
-      verificationURL: verificationURL,
-    });
-  } catch (err) {
-    // If there's an error sending the email, reset the token fields but keep the user
-    user.emailVerificationToken = undefined;
-    user.emailVerificationExpires = undefined;
-    await user.save({ validateBeforeSave: false });
-
-    return res.status(201).json({
-      status: "success",
-      message:
-        "User registered successfully but verification email could not be sent",
-      data: {
-        _id: user._id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        isEmailVerified: user.isEmailVerified,
-        token: generateToken(user._id),
-      },
-    });
-  }
-});
+import { deleteImage, getImagePath } from "../middleware/uploadMiddleware";
 
 /**
  * @desc    Get user profile
@@ -142,6 +33,7 @@ export const getUserProfile = catchAsync(
         name: user.name,
         email: user.email,
         role: user.role,
+        avatar: user.avatar,
         isEmailVerified: user.isEmailVerified,
         phone: user.phone,
         cart: user.cart,
@@ -184,9 +76,86 @@ export const updateUserProfile = catchAsync(
         name: updatedUser.name,
         email: updatedUser.email,
         role: updatedUser.role,
+        avatar: updatedUser.avatar,
         isEmailVerified: updatedUser.isEmailVerified,
         phone: updatedUser.phone,
         token: generateToken(updatedUser._id),
+      },
+    });
+  }
+);
+
+/**
+ * @desc    Upload/Update user avatar
+ * @route   PUT /api/users/avatar
+ * @access  Private
+ */
+export const uploadAvatar = catchAsync(
+  async (req: AuthRequest, res: Response) => {
+    if (!req.user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ message: "No file uploaded" });
+    }
+
+    const user = await User.findById(req.user._id);
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // Delete old avatar if it exists and is not the default
+    if (user.avatar && !user.avatar.includes("default-avatar")) {
+      deleteImage(user.avatar);
+    }
+
+    // Set new avatar path
+    user.avatar = getImagePath(req.file.filename, "avatars");
+    await user.save();
+
+    res.status(200).json({
+      status: "success",
+      message: "Avatar uploaded successfully",
+      data: {
+        avatar: user.avatar,
+      },
+    });
+  }
+);
+
+/**
+ * @desc    Delete user avatar (reset to default)
+ * @route   DELETE /api/users/avatar
+ * @access  Private
+ */
+export const deleteAvatar = catchAsync(
+  async (req: AuthRequest, res: Response) => {
+    if (!req.user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const user = await User.findById(req.user._id);
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // Delete current avatar if not default
+    if (user.avatar && !user.avatar.includes("default-avatar")) {
+      deleteImage(user.avatar);
+    }
+
+    // Reset to default avatar
+    user.avatar = "/uploads/avatars/default-avatar.png";
+    await user.save();
+
+    res.status(200).json({
+      status: "success",
+      message: "Avatar deleted successfully",
+      data: {
+        avatar: user.avatar,
       },
     });
   }
@@ -394,319 +363,6 @@ export const deleteUserAddress = catchAsync(
     });
   }
 );
-
-/**
- * @desc    Add item to cart
- * @route   POST /api/users/cart
- * @access  Private
- */
-export const addToCart = catchAsync(async (req: AuthRequest, res: Response) => {
-  if (!req.user) {
-    return res.status(401).json({ message: "Authentication required" });
-  }
-
-  const user = await User.findById(req.user._id);
-  if (!user) {
-    return res.status(404).json({ message: "User not found" });
-  }
-
-  const { productId, quantity = 1, variation } = req.body;
-
-  // Validate that product exists
-  const product = await Product.findById(productId);
-  if (!product) {
-    return res.status(404).json({ message: "Product not found" });
-  }
-
-  // Check stock availability for variations or main product
-  let availableStock = product.countInStock;
-  let productPrice = product.price;
-  let productImage = product.mainImage || product.images[0];
-
-  if (variation && product.hasVariations) {
-    const productVariation = product.variations.find(
-      (v) => v.sku === variation.sku
-    );
-    if (!productVariation) {
-      return res.status(400).json({ message: "Product variation not found" });
-    }
-    availableStock = productVariation.countInStock;
-    productPrice = productVariation.price;
-  }
-
-  // Check if enough stock is available
-  if (availableStock < quantity) {
-    return res.status(400).json({
-      message: `Only ${availableStock} items available in stock`,
-    });
-  }
-
-  // Check if product with same variation already in cart
-  const existingProductIndex = user.cart.findIndex((item: any) => {
-    const sameProduct = item.product.toString() === productId;
-    if (!variation) return sameProduct;
-
-    // Compare variations if they exist
-    return sameProduct && item.variation?.sku === variation.sku;
-  });
-
-  if (existingProductIndex >= 0) {
-    // Check if total quantity would exceed stock
-    const newQuantity = user.cart[existingProductIndex].quantity + quantity;
-    if (newQuantity > availableStock) {
-      return res.status(400).json({
-        message: `Cannot add ${quantity} more items. Only ${
-          availableStock - user.cart[existingProductIndex].quantity
-        } more can be added`,
-      });
-    }
-
-    user.cart[existingProductIndex].quantity = newQuantity;
-  } else {
-    // Add new product to cart
-    user.cart.push({
-      product: productId,
-      name: product.name,
-      price: productPrice,
-      quantity: quantity,
-      image: productImage,
-      variation: variation || undefined,
-    });
-  }
-
-  await user.save();
-
-  res.status(200).json({
-    status: "success",
-    message: "Item added to cart successfully",
-    data: {
-      cart: user.cart,
-      cartCount: user.cart.reduce((total, item) => total + item.quantity, 0),
-    },
-  });
-});
-
-/**
- * @desc    Get user's cart
- * @route   GET /api/users/cart
- * @access  Private
- */
-export const getCart = catchAsync(async (req: AuthRequest, res: Response) => {
-  if (!req.user) {
-    return res.status(401).json({ message: "Authentication required" });
-  }
-
-  const user = await User.findById(req.user._id).populate({
-    path: "cart.product",
-    select:
-      "name price images countInStock hasVariations variations onSale salePrice",
-  });
-
-  if (!user) {
-    return res.status(404).json({ message: "User not found" });
-  }
-
-  // Calculate cart totals and validate stock
-  let cartTotal = 0;
-  const cartWithValidation = user.cart.map((item: any) => {
-    const cartItem = item.toObject();
-
-    // Check if product still exists and is in stock
-    if (!item.product) {
-      cartItem.stockStatus = "unavailable";
-      cartItem.maxQuantity = 0;
-    } else {
-      let availableStock = item.product.countInStock;
-      let currentPrice = item.product.price;
-
-      // Handle variations
-      if (item.variation && item.product.hasVariations) {
-        const variation = item.product.variations.find(
-          (v: any) => v.sku === item.variation.sku
-        );
-        if (variation) {
-          availableStock = variation.countInStock;
-          currentPrice = variation.price;
-        }
-      }
-
-      // Check for sale price
-      if (item.product.onSale && item.product.salePrice) {
-        currentPrice = item.product.salePrice;
-      }
-
-      cartItem.stockStatus = availableStock > 0 ? "available" : "out_of_stock";
-      cartItem.maxQuantity = availableStock;
-      cartItem.currentPrice = currentPrice;
-      cartItem.priceChanged = currentPrice !== item.price;
-
-      if (availableStock > 0) {
-        cartTotal += currentPrice * Math.min(item.quantity, availableStock);
-      }
-    }
-
-    return cartItem;
-  });
-
-  res.status(200).json({
-    status: "success",
-    data: {
-      cart: cartWithValidation,
-      cartCount: user.cart.reduce((total, item) => total + item.quantity, 0),
-      cartTotal: parseFloat(cartTotal.toFixed(2)),
-    },
-  });
-});
-
-/**
- * @desc    Update cart item
- * @route   PUT /api/users/cart/:productId
- * @access  Private
- */
-export const updateCartItem = catchAsync(
-  async (req: AuthRequest, res: Response) => {
-    if (!req.user) {
-      return res.status(401).json({ message: "Authentication required" });
-    }
-
-    const user = await User.findById(req.user._id);
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
-    const { productId } = req.params;
-    const { quantity, variationSku } = req.body;
-
-    // Find product in cart
-    const productIndex = user.cart.findIndex((item: any) => {
-      const sameProduct = item.product.toString() === productId;
-      if (!variationSku) return sameProduct;
-      return sameProduct && item.variation?.sku === variationSku;
-    });
-
-    if (productIndex === -1) {
-      return res.status(404).json({ message: "Product not found in cart" });
-    }
-
-    // Update quantity or remove if quantity is 0
-    if (quantity <= 0) {
-      user.cart.splice(productIndex, 1);
-    } else {
-      // Validate stock before updating
-      const product = await Product.findById(productId);
-      if (!product) {
-        return res.status(404).json({ message: "Product no longer exists" });
-      }
-
-      let availableStock = product.countInStock;
-      if (variationSku && product.hasVariations) {
-        const variation = product.variations.find(
-          (v) => v.sku === variationSku
-        );
-        if (!variation) {
-          return res
-            .status(400)
-            .json({ message: "Product variation not found" });
-        }
-        availableStock = variation.countInStock;
-      }
-
-      if (quantity > availableStock) {
-        return res.status(400).json({
-          message: `Only ${availableStock} items available in stock`,
-        });
-      }
-
-      user.cart[productIndex].quantity = quantity;
-    }
-
-    await user.save();
-
-    res.status(200).json({
-      status: "success",
-      message:
-        quantity > 0 ? "Cart updated successfully" : "Item removed from cart",
-      data: {
-        cart: user.cart,
-        cartCount: user.cart.reduce((total, item) => total + item.quantity, 0),
-      },
-    });
-  }
-);
-
-/**
- * @desc    Remove item from cart
- * @route   DELETE /api/users/cart/:productId
- * @access  Private
- */
-export const removeFromCart = catchAsync(
-  async (req: AuthRequest, res: Response) => {
-    if (!req.user) {
-      return res.status(401).json({ message: "Authentication required" });
-    }
-
-    const user = await User.findById(req.user._id);
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
-    const { productId } = req.params;
-    const { variationSku } = req.query;
-
-    // Store original cart length to check if item was found
-    const originalLength = user.cart.length;
-
-    // Remove product from cart
-    user.cart = user.cart.filter((item: any) => {
-      const sameProduct = item.product.toString() === productId;
-      if (!variationSku) return !sameProduct;
-      return !(sameProduct && item.variation?.sku === variationSku);
-    });
-
-    if (user.cart.length === originalLength) {
-      return res.status(404).json({ message: "Product not found in cart" });
-    }
-
-    await user.save();
-
-    res.status(200).json({
-      status: "success",
-      message: "Item removed from cart successfully",
-      data: {
-        cart: user.cart,
-        cartCount: user.cart.reduce((total, item) => total + item.quantity, 0),
-      },
-    });
-  }
-);
-
-/**
- * @desc    Clear cart
- * @route   DELETE /api/users/cart
- * @access  Private
- */
-export const clearCart = catchAsync(async (req: AuthRequest, res: Response) => {
-  if (!req.user) {
-    return res.status(401).json({ message: "Authentication required" });
-  }
-
-  const user = await User.findById(req.user._id);
-  if (!user) {
-    return res.status(404).json({ message: "User not found" });
-  }
-
-  user.cart = [];
-  await user.save();
-
-  res.status(200).json({
-    status: "success",
-    message: "Cart cleared successfully",
-    data: {
-      cart: user.cart,
-      cartCount: 0,
-    },
-  });
-});
 
 /**
  * @desc    Add product to favorites/wishlist
@@ -978,193 +634,3 @@ export const getOrderHistory = catchAsync(
     });
   }
 );
-
-/**
- * @desc    Move item from cart to favorites
- * @route   POST /api/users/cart/move-to-favorites/:productId
- * @access  Private
- */
-export const moveToFavorites = catchAsync(
-  async (req: AuthRequest, res: Response) => {
-    if (!req.user) {
-      return res.status(401).json({ message: "Authentication required" });
-    }
-
-    const user = await User.findById(req.user._id);
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
-    const { productId } = req.params;
-    const { variationSku } = req.query;
-
-    // Find product in cart
-    const cartItemIndex = user.cart.findIndex((item: any) => {
-      const sameProduct = item.product.toString() === productId;
-      if (!variationSku) return sameProduct;
-      return sameProduct && item.variation?.sku === variationSku;
-    });
-
-    if (cartItemIndex === -1) {
-      return res.status(404).json({ message: "Product not found in cart" });
-    }
-
-    // Check if already in favorites
-    const existingFavorite = user.favorites.find(
-      (item) => item.product.toString() === productId
-    );
-
-    if (!existingFavorite) {
-      // Add to favorites
-      user.favorites.push({
-        product: productId,
-        addedAt: new Date(),
-      });
-    }
-
-    // Remove from cart
-    user.cart.splice(cartItemIndex, 1);
-
-    await user.save();
-
-    res.status(200).json({
-      status: "success",
-      message: "Item moved to favorites successfully",
-      data: {
-        cart: user.cart,
-        favorites: user.favorites,
-        cartCount: user.cart.reduce((total, item) => total + item.quantity, 0),
-        favoritesCount: user.favorites.length,
-      },
-    });
-  }
-);
-
-/**
- * @desc    Verify user email
- * @route   GET /api/users/verify-email/:token
- * @access  Public
- */
-export const verifyEmail = catchAsync(async (req: Request, res: Response) => {
-  const { token } = req.params;
-
-  // Hash the token from the URL to compare with stored hashed token
-  const hashedToken = crypto.createHash("sha256").update(token).digest("hex");
-
-  // Find user with the token and check if token is still valid
-  const user = await User.findOne({
-    emailVerificationToken: hashedToken,
-    emailVerificationExpires: { $gt: Date.now() },
-  });
-
-  if (!user) {
-    return res.status(400).json({
-      status: "fail",
-      message: "Token is invalid or has expired",
-    });
-  }
-
-  // Update user verification status
-  user.isEmailVerified = true;
-  user.emailVerificationToken = undefined;
-  user.emailVerificationExpires = undefined;
-  await user.save({ validateBeforeSave: false });
-
-  res.status(200).json({
-    status: "success",
-    message: "Email verified successfully",
-  });
-});
-
-/**
- * @desc    Request password reset
- * @route   POST /api/users/forgot-password
- * @access  Public
- */
-export const forgotPassword = catchAsync(
-  async (req: Request, res: Response) => {
-    const { email } = req.body;
-
-    const user = await User.findOne({ email });
-
-    if (!user) {
-      return res.status(404).json({ message: "No user found with that email" });
-    }
-
-    // Generate reset token
-    const resetToken = user.createPasswordResetToken();
-    await user.save({ validateBeforeSave: false });
-
-    // Create reset URL
-    const resetURL = `${config.frontendBaseUrl}/reset-password/${resetToken}`;
-
-    // In a production environment, you would send an email with the reset URL
-    // For this implementation, we'll just return the token in the response
-    // NOTE: In a real application, you would NOT send the token in the response for security reasons
-
-    try {
-      // Send password reset email
-      await sendPasswordResetEmail(user.email, user.name, resetURL);
-
-      res.status(200).json({
-        status: "success",
-        message: "Password reset token sent to email",
-        // In a real application, you would remove the following line
-        resetURL: resetURL,
-      });
-    } catch (err) {
-      // If there's an error sending the email, reset the token fields
-      user.passwordResetToken = undefined;
-      user.passwordResetExpires = undefined;
-      await user.save({ validateBeforeSave: false });
-
-      return res.status(500).json({
-        status: "error",
-        message: "There was an error sending the email. Try again later.",
-      });
-    }
-  }
-);
-
-/**
- * @desc    Reset password
- * @route   POST /api/users/reset-password/:token
- * @access  Public
- */
-export const resetPassword = catchAsync(async (req: Request, res: Response) => {
-  const { token } = req.params;
-  const { password } = req.body;
-
-  // Hash the token from the URL to compare with stored hashed token
-  const hashedToken = crypto.createHash("sha256").update(token).digest("hex");
-
-  // Find user with the token and check if token is still valid
-  const user = await User.findOne({
-    passwordResetToken: hashedToken,
-    passwordResetExpires: { $gt: Date.now() },
-  });
-
-  if (!user) {
-    return res.status(400).json({
-      status: "fail",
-      message: "Token is invalid or has expired",
-    });
-  }
-
-  // Update password and clear reset token fields
-  user.password = password;
-  user.passwordResetToken = undefined;
-  user.passwordResetExpires = undefined;
-  await user.save();
-
-  // Generate new JWT token for the user
-  const jwtToken = generateToken(user._id);
-
-  res.status(200).json({
-    status: "success",
-    message: "Password reset successfully",
-    data: {
-      token: jwtToken,
-    },
-  });
-});

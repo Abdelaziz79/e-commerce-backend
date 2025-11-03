@@ -1,6 +1,7 @@
 // src/controllers/brandController.ts
 
 import { Request, Response } from "express";
+import { deleteImage, getImagePath } from "../middleware/uploadMiddleware";
 import Brand from "../models/brandModel";
 import APIFeatures from "../utils/apiFeatures";
 import catchAsync from "../utils/catchAsync";
@@ -11,13 +12,19 @@ import catchAsync from "../utils/catchAsync";
  * @access  Private/Admin
  */
 export const createBrand = catchAsync(async (req: Request, res: Response) => {
-  const { name, description, logo, website } = req.body;
+  const { name, description, website, isActive } = req.body;
+  // Handle uploaded logo
+  let logoPath;
+  if (req.file) {
+    logoPath = getImagePath(req.file.filename, "brands");
+  }
 
   const brand = await Brand.create({
     name,
     description,
-    logo,
+    logo: logoPath,
     website,
+    isActive,
   });
 
   res.status(201).json({
@@ -29,12 +36,13 @@ export const createBrand = catchAsync(async (req: Request, res: Response) => {
 });
 
 /**
- * @desc    Get all brands
+ * @desc    Get all ACTIVE brands for public users
  * @route   GET /api/v1/brands
  * @access  Public
  */
 export const getAllBrands = catchAsync(async (req: Request, res: Response) => {
-  const features = new APIFeatures(Brand.find(), req.query)
+  // Hardcode the filter to only include active brands for the public route
+  const features = new APIFeatures(Brand.find({ isActive: true }), req.query)
     .filter()
     .sort()
     .limitFields()
@@ -54,6 +62,34 @@ export const getAllBrands = catchAsync(async (req: Request, res: Response) => {
 });
 
 /**
+ * @desc    Get ALL brands for administrators
+ * @route   GET /api/v1/brands/admin/all
+ * @access  Private/Admin
+ */
+export const getAllBrandsAdmin = catchAsync(
+  async (req: Request, res: Response) => {
+    // This route does not filter by isActive, returning all brands
+    const features = new APIFeatures(Brand.find(), req.query)
+      .filter() // Admin can still use query filters like ?name=... or ?isActive=...
+      .sort()
+      .limitFields()
+      .paginate();
+
+    const brands = await features.query;
+    const total = await features.getTotalCount();
+
+    res.status(200).json({
+      status: "success",
+      results: brands.length,
+      total,
+      data: {
+        brands,
+      },
+    });
+  }
+);
+
+/**
  * @desc    Get a single brand by ID or slug
  * @route   GET /api/v1/brands/:id
  * @access  Public
@@ -61,7 +97,7 @@ export const getAllBrands = catchAsync(async (req: Request, res: Response) => {
 export const getBrandById = catchAsync(async (req: Request, res: Response) => {
   const brand = await Brand.findById(req.params.id);
 
-  if (!brand) {
+  if (!brand || brand.isActive === false) {
     return res.status(404).json({ message: "Brand not found" });
   }
 
@@ -79,19 +115,30 @@ export const getBrandById = catchAsync(async (req: Request, res: Response) => {
  * @access  Private/Admin
  */
 export const updateBrand = catchAsync(async (req: Request, res: Response) => {
-  const brand = await Brand.findByIdAndUpdate(req.params.id, req.body, {
-    new: true,
-    runValidators: true,
-  });
+  const brand = await Brand.findById(req.params.id);
 
   if (!brand) {
     return res.status(404).json({ message: "Brand not found" });
   }
 
+  // Handle logo update
+  if (req.file) {
+    // Delete old logo if exists
+    if (brand.logo) {
+      deleteImage(brand.logo);
+    }
+    req.body.logo = getImagePath(req.file.filename, "brands");
+  }
+
+  const updatedBrand = await Brand.findByIdAndUpdate(req.params.id, req.body, {
+    new: true,
+    runValidators: true,
+  });
+
   res.status(200).json({
     status: "success",
     data: {
-      brand,
+      brand: updatedBrand,
     },
   });
 });
@@ -102,14 +149,119 @@ export const updateBrand = catchAsync(async (req: Request, res: Response) => {
  * @access  Private/Admin
  */
 export const deleteBrand = catchAsync(async (req: Request, res: Response) => {
-  const brand = await Brand.findByIdAndDelete(req.params.id);
+  const brand = await Brand.findById(req.params.id);
 
   if (!brand) {
     return res.status(404).json({ message: "Brand not found" });
   }
+
+  // Delete logo if exists
+  if (brand.logo) {
+    deleteImage(brand.logo);
+  }
+
+  await Brand.findByIdAndDelete(req.params.id);
 
   res.status(204).json({
     status: "success",
     data: null,
   });
 });
+
+/**
+ * @desc    Toggle brand active status
+ * @route   PUT /api/v1/brands/:id/toggle-active
+ * @access  Private/Admin
+ */
+export const toggleBrandActive = catchAsync(
+  async (req: Request, res: Response) => {
+    const brand = await Brand.findById(req.params.id);
+
+    if (!brand) {
+      return res.status(404).json({ message: "Brand not found" });
+    }
+
+    brand.isActive = !brand.isActive;
+    await brand.save();
+
+    res.status(200).json({
+      status: "success",
+      data: {
+        brand,
+      },
+    });
+  }
+);
+
+/**
+ * @desc    Search brands for public users (only active brands)
+ * @route   GET /api/v1/brands/search
+ * @access  Public
+ */
+export const searchBrands = catchAsync(async (req: Request, res: Response) => {
+  const { q } = req.query;
+
+  // Search only active brands by name, description, or website
+  const searchQuery = {
+    isActive: true,
+    $or: [
+      { name: { $regex: q, $options: "i" } },
+      { description: { $regex: q, $options: "i" } },
+      { website: { $regex: q, $options: "i" } },
+    ],
+  };
+
+  const features = new APIFeatures(Brand.find(searchQuery), req.query)
+    .sort()
+    .limitFields()
+    .paginate();
+
+  const brands = await features.query;
+  const total = await Brand.countDocuments(searchQuery);
+
+  res.status(200).json({
+    status: "success",
+    results: brands.length,
+    total,
+    data: {
+      brands,
+    },
+  });
+});
+
+/**
+ * @desc    Search ALL brands for administrators
+ * @route   GET /api/v1/brands/admin/search
+ * @access  Private/Admin
+ */
+export const searchBrandsAdmin = catchAsync(
+  async (req: Request, res: Response) => {
+    const { q } = req.query;
+
+    // Search all brands (active and inactive) by name, description, or website
+    const searchQuery = {
+      $or: [
+        { name: { $regex: q, $options: "i" } },
+        { description: { $regex: q, $options: "i" } },
+        { website: { $regex: q, $options: "i" } },
+      ],
+    };
+
+    const features = new APIFeatures(Brand.find(searchQuery), req.query)
+      .sort()
+      .limitFields()
+      .paginate();
+
+    const brands = await features.query;
+    const total = await Brand.countDocuments(searchQuery);
+
+    res.status(200).json({
+      status: "success",
+      results: brands.length,
+      total,
+      data: {
+        brands,
+      },
+    });
+  }
+);

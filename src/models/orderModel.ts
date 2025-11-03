@@ -1,136 +1,239 @@
+// src/models/orderModel.ts
 import mongoose, { Schema } from "mongoose";
 import { OrderDocument, OrderStatus } from "../types/order.types";
 
-// Updated to use consistent field naming (quantity instead of qty)
-const orderItemSchema = new Schema({
-  name: { type: String, required: true },
-  quantity: { type: Number, required: true }, // Changed from qty to quantity
-  image: { type: String, required: true },
-  price: { type: Number, required: true },
-  product: {
-    type: Schema.Types.ObjectId as any,
-    required: true,
-    ref: "Product",
+const orderItemSchema = new Schema(
+  {
+    name: {
+      type: String,
+      required: [true, "Product name is required"],
+    },
+    quantity: {
+      type: Number,
+      required: [true, "Quantity is required"],
+      min: [1, "Quantity must be at least 1"],
+    },
+    image: {
+      type: String,
+      required: [true, "Product image is required"],
+    },
+    price: {
+      type: Number,
+      required: [true, "Price is required"],
+      min: [0, "Price cannot be negative"],
+    },
+    product: {
+      type: Schema.Types.ObjectId,
+      required: [true, "Product reference is required"],
+      ref: "Product",
+    },
+    variation: {
+      size: String,
+      color: String,
+      material: String,
+      style: String,
+      sku: String,
+    },
   },
-  variation: {
-    // Changed from variant to variation for consistency
-    size: String,
-    color: String,
-    material: String,
-    style: String,
-    sku: { type: String },
+  { _id: false }
+);
+
+const shippingAddressSchema = new Schema(
+  {
+    address: {
+      type: String,
+      required: [true, "Address is required"],
+      trim: true,
+    },
+    city: {
+      type: String,
+      required: [true, "City is required"],
+      trim: true,
+    },
+    postalCode: {
+      type: String,
+      required: [true, "Postal code is required"],
+      trim: true,
+    },
+    country: {
+      type: String,
+      required: [true, "Country is required"],
+      trim: true,
+    },
+    phoneNumber: {
+      type: String,
+      trim: true,
+    },
   },
-});
+  { _id: false }
+);
 
-const shippingAddressSchema = new Schema({
-  address: { type: String, required: true },
-  city: { type: String, required: true },
-  postalCode: { type: String, required: true },
-  country: { type: String, required: true },
-  phoneNumber: { type: String },
-});
-
-const paymentResultSchema = new Schema({
-  id: { type: String },
-  status: { type: String },
-  update_time: { type: String },
-  email_address: { type: String },
-  paymentMethod: { type: String },
-  transactionFee: { type: Number },
-});
-
-const discountSchema = new Schema({
-  code: { type: String, required: true },
-  type: { type: String, enum: ["percentage", "fixed"], required: true },
-  value: { type: Number, required: true },
-  description: { type: String },
-});
-
-const statusHistorySchema = new Schema({
-  status: {
-    type: String,
-    enum: [
-      "pending",
-      "processing",
-      "shipped",
-      "delivered",
-      "cancelled",
-      "refunded",
-      "on-hold",
-      "failed",
-      "completed",
-    ],
-    required: true,
+const paymentResultSchema = new Schema(
+  {
+    id: { type: String },
+    status: { type: String },
+    update_time: { type: String },
+    email_address: { type: String },
+    paymentMethod: { type: String },
+    transactionFee: { type: Number },
   },
-  date: { type: Date, default: Date.now },
-  note: { type: String },
-});
+  { _id: false }
+);
 
-const shippingInfoSchema = new Schema({
-  carrier: { type: String },
-  trackingNumber: { type: String },
-  estimatedDeliveryDate: { type: Date },
-  shippedAt: { type: Date },
-});
-
-const refundSchema = new Schema({
-  amount: { type: Number, required: true },
-  reason: { type: String, required: true },
-  date: { type: Date, default: Date.now },
-  status: {
-    type: String,
-    enum: ["pending", "processed", "rejected"],
-    default: "pending",
+const discountSchema = new Schema(
+  {
+    code: {
+      type: String,
+      required: true,
+      trim: true,
+      uppercase: true,
+    },
+    type: {
+      type: String,
+      enum: ["percentage", "fixed"],
+      required: true,
+    },
+    value: {
+      type: Number,
+      required: true,
+      min: [0, "Discount value cannot be negative"],
+    },
+    description: { type: String },
   },
-});
+  { _id: false }
+);
+
+const statusHistorySchema = new Schema(
+  {
+    status: {
+      type: String,
+      enum: [
+        "pending",
+        "processing",
+        "shipped",
+        "delivered",
+        "cancelled",
+        "refunded",
+        "on-hold",
+        "failed",
+        "completed",
+      ],
+      required: true,
+    },
+    date: {
+      type: Date,
+      default: Date.now,
+    },
+    note: { type: String },
+  },
+  { _id: false }
+);
+
+const shippingInfoSchema = new Schema(
+  {
+    carrier: { type: String },
+    trackingNumber: { type: String },
+    estimatedDeliveryDate: { type: Date },
+    shippedAt: { type: Date },
+  },
+  { _id: false }
+);
+
+const refundSchema = new Schema(
+  {
+    amount: {
+      type: Number,
+      required: true,
+      min: [0, "Refund amount cannot be negative"],
+    },
+    reason: {
+      type: String,
+      required: true,
+    },
+    date: {
+      type: Date,
+      default: Date.now,
+    },
+    status: {
+      type: String,
+      enum: ["pending", "processed", "rejected"],
+      default: "pending",
+    },
+  },
+  { _id: false }
+);
 
 const orderSchema = new Schema<OrderDocument>(
   {
     user: {
-      type: Schema.Types.ObjectId as any,
-      required: true,
+      type: Schema.Types.ObjectId,
+      required: [true, "User reference is required"],
       ref: "User",
+      index: true,
     },
     orderNumber: {
       type: String,
-      required: true,
+      unique: true,
+      uppercase: true,
+      index: true,
+      // Not required here because it's auto-generated in pre-save hook
+      // Validation happens before pre-save, so we can't require it
     },
-    orderItems: [orderItemSchema],
-    shippingAddress: shippingAddressSchema,
+    orderItems: {
+      type: [orderItemSchema],
+      required: [true, "Order items are required"],
+      validate: {
+        validator: function (items: any[]) {
+          return items && items.length > 0;
+        },
+        message: "Order must contain at least one item",
+      },
+    },
+    shippingAddress: {
+      type: shippingAddressSchema,
+      required: [true, "Shipping address is required"],
+    },
     paymentMethod: {
       type: String,
-      required: true,
+      required: [true, "Payment method is required"],
+      trim: true,
     },
     paymentResult: paymentResultSchema,
     itemsPrice: {
       type: Number,
       required: true,
       default: 0.0,
+      min: [0, "Items price cannot be negative"],
     },
     subtotal: {
       type: Number,
       required: true,
       default: 0.0,
+      min: [0, "Subtotal cannot be negative"],
     },
     taxPrice: {
       type: Number,
       required: true,
       default: 0.0,
+      min: [0, "Tax price cannot be negative"],
     },
     shippingPrice: {
       type: Number,
       required: true,
       default: 0.0,
+      min: [0, "Shipping price cannot be negative"],
     },
     totalPrice: {
       type: Number,
       required: true,
       default: 0.0,
+      min: [0, "Total price cannot be negative"],
     },
     discount: discountSchema,
     discountAmount: {
       type: Number,
       default: 0.0,
+      min: [0, "Discount amount cannot be negative"],
     },
     status: {
       type: String,
@@ -147,13 +250,21 @@ const orderSchema = new Schema<OrderDocument>(
       ],
       default: "pending",
       required: true,
+      index: true,
     },
-    statusHistory: [statusHistorySchema],
+    statusHistory: {
+      type: [statusHistorySchema],
+      default: [],
+    },
     notes: {
       type: String,
+      trim: true,
+      maxlength: [500, "Customer notes cannot exceed 500 characters"],
     },
     adminNotes: {
       type: String,
+      trim: true,
+      maxlength: [1000, "Admin notes cannot exceed 1000 characters"],
     },
     isPaid: {
       type: Boolean,
@@ -171,7 +282,10 @@ const orderSchema = new Schema<OrderDocument>(
     deliveredAt: {
       type: Date,
     },
-    shipping: shippingInfoSchema,
+    shipping: {
+      type: shippingInfoSchema,
+      default: {},
+    },
     refund: refundSchema,
     invoiceUrl: {
       type: String,
@@ -182,29 +296,39 @@ const orderSchema = new Schema<OrderDocument>(
   }
 );
 
-// Create indexes for better query performance
-orderSchema.index({ user: 1 });
-orderSchema.index({ orderNumber: 1 }, { unique: true });
-orderSchema.index({ status: 1 });
-orderSchema.index({ createdAt: -1 });
+// Compound indexes for better query performance
+orderSchema.index({ user: 1, createdAt: -1 });
+orderSchema.index({ user: 1, status: 1 });
+orderSchema.index({ status: 1, createdAt: -1 });
 orderSchema.index({ "orderItems.product": 1 });
+orderSchema.index({ "shippingAddress.city": 1 });
+orderSchema.index({ isPaid: 1, isDelivered: 1 });
 
-// Generate order number automatically before saving
-orderSchema.pre("save", async function (next) {
-  if (this.isNew) {
+// Generate unique order number before validation
+orderSchema.pre("validate", function (next) {
+  // Generate order number before validation runs
+  if (this.isNew && !this.orderNumber) {
     const date = new Date();
-    const year = date.getFullYear().toString().substr(-2);
+    const year = date.getFullYear().toString().slice(-2);
     const month = (date.getMonth() + 1).toString().padStart(2, "0");
     const day = date.getDate().toString().padStart(2, "0");
-    // Take the last 6 characters of the unique _id
+
+    // Use last 6 characters of _id for uniqueness
     const uniquePart = (this._id as mongoose.Types.ObjectId)
       .toString()
       .slice(-6)
       .toUpperCase();
 
     this.orderNumber = `ORD-${year}${month}${day}-${uniquePart}`;
+  }
 
-    // Initialize status history with current status
+  next();
+});
+
+// Initialize status history before saving
+orderSchema.pre("save", function (next) {
+  // Initialize status history if new order
+  if (this.isNew && (!this.statusHistory || this.statusHistory.length === 0)) {
     this.statusHistory = [
       {
         status: this.status as OrderStatus,
@@ -215,6 +339,63 @@ orderSchema.pre("save", async function (next) {
   }
 
   next();
+});
+
+// Validate prices before saving
+orderSchema.pre("save", function (next) {
+  // Calculate expected subtotal from order items
+  const calculatedSubtotal = this.orderItems.reduce(
+    (sum, item) => sum + item.price * item.quantity,
+    0
+  );
+
+  // Allow small rounding differences (0.01)
+  if (Math.abs(calculatedSubtotal - this.itemsPrice) > 0.01) {
+    return next(
+      new Error(
+        `Items price mismatch. Expected: ${calculatedSubtotal.toFixed(
+          2
+        )}, Got: ${this.itemsPrice.toFixed(2)}`
+      )
+    );
+  }
+
+  // Validate total price calculation
+  const expectedTotal =
+    this.subtotal + this.taxPrice + this.shippingPrice - this.discountAmount;
+  if (Math.abs(expectedTotal - this.totalPrice) > 0.01) {
+    return next(
+      new Error(
+        `Total price mismatch. Expected: ${expectedTotal.toFixed(
+          2
+        )}, Got: ${this.totalPrice.toFixed(2)}`
+      )
+    );
+  }
+
+  next();
+});
+
+// Prevent modification of completed/cancelled orders
+orderSchema.pre("save", function (next) {
+  if (!this.isNew) {
+    const originalStatus = (this as any)._original?.status;
+
+    if (originalStatus === "completed" && this.status !== "completed") {
+      return next(new Error("Cannot modify a completed order"));
+    }
+
+    if (originalStatus === "cancelled" && this.status !== "cancelled") {
+      return next(new Error("Cannot modify a cancelled order"));
+    }
+  }
+
+  next();
+});
+
+// Store original document for comparison
+orderSchema.post("init", function (doc) {
+  (doc as any)._original = doc.toObject();
 });
 
 const Order = mongoose.model<OrderDocument>("Order", orderSchema);

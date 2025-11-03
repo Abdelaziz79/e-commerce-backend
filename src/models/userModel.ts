@@ -153,6 +153,19 @@ const userSchema = new Schema<UserDocument>(
       enum: ["user", "admin"],
       default: "user",
     },
+    avatar: {
+      type: String,
+      default: "/uploads/avatars/default-avatar.png",
+      validate: {
+        validator: function (img: string) {
+          if (img.startsWith("http") || img.startsWith("https")) {
+            return /^https?:\/\/.*\.(jpg|jpeg|png|gif|webp)$/i.test(img);
+          }
+          return /^\/.*\.(jpg|jpeg|png|gif|webp)$/i.test(img);
+        },
+        message: "Avatar must be a valid URL or relative path",
+      },
+    },
     isEmailVerified: {
       type: Boolean,
       default: false,
@@ -170,7 +183,7 @@ const userSchema = new Schema<UserDocument>(
     phone: {
       type: String,
       trim: true,
-      match: [/^\+?[\d\s-()]{10,20}$/, "Please enter a valid phone number"], // Updated regex to match validation
+      match: [/^\+?[\d\s-()]{10,20}$/, "Please enter a valid phone number"],
     },
   },
   {

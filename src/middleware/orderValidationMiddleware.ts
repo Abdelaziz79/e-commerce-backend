@@ -1,122 +1,96 @@
-import { body, param, query } from "express-validator";
-import { OrderStatus } from "../types/order.types";
+// src/middleware/orderValidationMiddleware.ts
+import { body, param, query, ValidationChain } from "express-validator";
 
 /**
- * Validate create order request
+ * Validation for creating an order
  */
-export const validateCreateOrder = [
+export const validateCreateOrder: ValidationChain[] = [
   // Order items validation
   body("orderItems")
     .isArray({ min: 1 })
-    .withMessage("Order items must be an array with at least one item"),
+    .withMessage("Order must contain at least one item"),
+
+  body("orderItems.*.product")
+    .notEmpty()
+    .withMessage("Product ID is required")
+    .isMongoId()
+    .withMessage("Invalid product ID"),
 
   body("orderItems.*.name")
-    .trim()
     .notEmpty()
-    .withMessage("Order item name is required")
-    .isLength({ max: 255 })
-    .withMessage("Order item name must be less than 255 characters"),
+    .withMessage("Product name is required")
+    .trim()
+    .isLength({ min: 1, max: 200 })
+    .withMessage("Product name must be between 1 and 200 characters"),
 
   body("orderItems.*.quantity")
-    .isInt({ min: 1 })
-    .withMessage("Order item quantity must be at least 1"),
+    .isInt({ min: 1, max: 1000 })
+    .withMessage("Quantity must be between 1 and 1000"),
 
   body("orderItems.*.price")
     .isFloat({ min: 0 })
-    .withMessage("Order item price must be a positive number"),
-
-  body("orderItems.*.product")
-    .isMongoId()
-    .withMessage("Order item product must be a valid product ID"),
+    .withMessage("Price must be a positive number"),
 
   body("orderItems.*.image")
-    .trim()
     .notEmpty()
-    .withMessage("Order item image is required")
-    .custom((value) => {
-      const urlRegex = /^https?:\/\/.*\.(jpg|jpeg|png|gif|webp)$/i;
-      const pathRegex = /^\/.*\.(jpg|jpeg|png|gif|webp)$/i;
-      if (!urlRegex.test(value) && !pathRegex.test(value)) {
-        throw new Error("Order item image must be a valid URL or path");
-      }
-      return true;
-    }),
+    .withMessage("Product image is required")
+    .isString(),
 
-  // Variation validation (optional)
-  body("orderItems.*.variation.size")
-    .optional()
-    .trim()
-    .isLength({ max: 50 })
-    .withMessage("Size must be less than 50 characters"),
+  // Optional variation fields
+  body("orderItems.*.variation.sku").optional().isString().trim(),
 
-  body("orderItems.*.variation.color")
-    .optional()
-    .trim()
-    .isLength({ max: 50 })
-    .withMessage("Color must be less than 50 characters"),
+  body("orderItems.*.variation.size").optional().isString().trim(),
 
-  body("orderItems.*.variation.material")
-    .optional()
-    .trim()
-    .isLength({ max: 50 })
-    .withMessage("Material must be less than 50 characters"),
-
-  body("orderItems.*.variation.style")
-    .optional()
-    .trim()
-    .isLength({ max: 50 })
-    .withMessage("Style must be less than 50 characters"),
-
-  body("orderItems.*.variation.sku")
-    .optional()
-    .trim()
-    .isLength({ max: 100 })
-    .withMessage("SKU must be less than 100 characters"),
+  body("orderItems.*.variation.color").optional().isString().trim(),
 
   // Shipping address validation
-  body("shippingAddress.address")
-    .trim()
+  body("shippingAddress")
     .notEmpty()
-    .withMessage("Shipping address is required")
-    .isLength({ max: 255 })
-    .withMessage("Address must be less than 255 characters"),
+    .withMessage("Shipping address is required"),
+
+  body("shippingAddress.address")
+    .notEmpty()
+    .withMessage("Street address is required")
+    .trim()
+    .isLength({ min: 5, max: 200 })
+    .withMessage("Address must be between 5 and 200 characters"),
 
   body("shippingAddress.city")
-    .trim()
     .notEmpty()
     .withMessage("City is required")
-    .isLength({ max: 100 })
-    .withMessage("City must be less than 100 characters"),
+    .trim()
+    .isLength({ min: 2, max: 100 })
+    .withMessage("City must be between 2 and 100 characters"),
 
   body("shippingAddress.postalCode")
-    .trim()
     .notEmpty()
     .withMessage("Postal code is required")
-    .isLength({ max: 20 })
-    .withMessage("Postal code must be less than 20 characters"),
+    .trim()
+    .isLength({ min: 3, max: 20 })
+    .withMessage("Postal code must be between 3 and 20 characters"),
 
   body("shippingAddress.country")
-    .trim()
     .notEmpty()
     .withMessage("Country is required")
-    .isLength({ max: 100 })
-    .withMessage("Country must be less than 100 characters"),
+    .trim()
+    .isLength({ min: 2, max: 100 })
+    .withMessage("Country must be between 2 and 100 characters"),
 
   body("shippingAddress.phoneNumber")
     .optional()
     .trim()
     .matches(/^\+?[\d\s-()]{10,20}$/)
-    .withMessage("Phone number must be valid"),
+    .withMessage("Invalid phone number format"),
 
-  // Payment method
+  // Payment method validation
   body("paymentMethod")
-    .trim()
     .notEmpty()
     .withMessage("Payment method is required")
-    .isIn(["PayPal", "Stripe", "Credit Card", "Cash on Delivery"])
+    .trim()
+    .isIn(["card", "paypal", "stripe", "cod", "bank_transfer"])
     .withMessage("Invalid payment method"),
 
-  // Price validation
+  // Price validations
   body("itemsPrice")
     .isFloat({ min: 0 })
     .withMessage("Items price must be a positive number"),
@@ -130,49 +104,74 @@ export const validateCreateOrder = [
     .withMessage("Shipping price must be a positive number"),
 
   body("totalPrice")
-    .isFloat({ min: 0.01 })
-    .withMessage("Total price must be greater than 0"),
+    .isFloat({ min: 0 })
+    .withMessage("Total price must be a positive number"),
 
-  // Discount validation (optional)
+  // Optional discount validation
   body("discount.code")
     .optional()
     .trim()
-    .notEmpty()
-    .withMessage("Discount code cannot be empty")
-    .isLength({ max: 50 })
-    .withMessage("Discount code must be less than 50 characters"),
+    .isLength({ min: 3, max: 50 })
+    .withMessage("Discount code must be between 3 and 50 characters"),
 
   body("discount.type")
     .optional()
     .isIn(["percentage", "fixed"])
-    .withMessage("Discount type must be 'percentage' or 'fixed'"),
+    .withMessage("Discount type must be percentage or fixed"),
 
   body("discount.value")
     .optional()
     .isFloat({ min: 0 })
-    .withMessage("Discount value must be a positive number"),
+    .withMessage("Discount value must be positive"),
 
-  body("discount.description")
-    .optional()
-    .trim()
-    .isLength({ max: 255 })
-    .withMessage("Discount description must be less than 255 characters"),
-
-  // Notes
+  // Optional notes
   body("notes")
     .optional()
     .trim()
     .isLength({ max: 500 })
-    .withMessage("Notes must be less than 500 characters"),
+    .withMessage("Notes cannot exceed 500 characters"),
 ];
 
 /**
- * Validate update order status request
+ * Validation for updating order to paid
  */
-export const validateUpdateOrderStatus = [
+export const validateUpdateToPaid: ValidationChain[] = [
+  param("id").isMongoId().withMessage("Invalid order ID"),
+
+  body("id")
+    .notEmpty()
+    .withMessage("Payment transaction ID is required")
+    .trim(),
+
+  body("status").notEmpty().withMessage("Payment status is required").trim(),
+
+  body("update_time")
+    .optional()
+    .isISO8601()
+    .withMessage("Invalid update time format"),
+
+  body("email_address")
+    .optional()
+    .isEmail()
+    .withMessage("Invalid email address"),
+
+  body("payment_method").optional().trim(),
+
+  body("transaction_fee")
+    .optional()
+    .isFloat({ min: 0 })
+    .withMessage("Transaction fee must be positive"),
+];
+
+/**
+ * Validation for updating order status
+ */
+export const validateUpdateOrderStatus: ValidationChain[] = [
   param("id").isMongoId().withMessage("Invalid order ID"),
 
   body("status")
+    .notEmpty()
+    .withMessage("Status is required")
     .isIn([
       "pending",
       "processing",
@@ -183,147 +182,114 @@ export const validateUpdateOrderStatus = [
       "on-hold",
       "failed",
       "completed",
-    ] as OrderStatus[])
+    ])
     .withMessage("Invalid order status"),
 
   body("note")
     .optional()
     .trim()
     .isLength({ max: 500 })
-    .withMessage("Note must be less than 500 characters"),
-
-  body("carrier")
-    .optional()
-    .trim()
-    .isLength({ max: 100 })
-    .withMessage("Carrier must be less than 100 characters"),
-
-  body("trackingNumber")
-    .optional()
-    .trim()
-    .isLength({ max: 100 })
-    .withMessage("Tracking number must be less than 100 characters"),
-
-  body("estimatedDeliveryDate")
-    .optional()
-    .isISO8601()
-    .withMessage("Estimated delivery date must be a valid date"),
-
-  body("refundAmount")
-    .optional()
-    .isFloat({ min: 0 })
-    .withMessage("Refund amount must be a positive number"),
-
-  body("refundReason")
-    .optional()
-    .trim()
-    .isLength({ max: 255 })
-    .withMessage("Refund reason must be less than 255 characters"),
+    .withMessage("Note cannot exceed 500 characters"),
 
   body("adminNotes")
     .optional()
     .trim()
     .isLength({ max: 1000 })
-    .withMessage("Admin notes must be less than 1000 characters"),
+    .withMessage("Admin notes cannot exceed 1000 characters"),
+
+  // Shipping info for shipped status
+  body("shippingInfo.carrier")
+    .optional()
+    .trim()
+    .isLength({ min: 2, max: 100 })
+    .withMessage("Carrier name must be between 2 and 100 characters"),
+
+  body("shippingInfo.trackingNumber")
+    .optional()
+    .trim()
+    .isLength({ min: 5, max: 100 })
+    .withMessage("Tracking number must be between 5 and 100 characters"),
+
+  body("shippingInfo.estimatedDeliveryDate")
+    .optional()
+    .isISO8601()
+    .withMessage("Invalid estimated delivery date"),
+
+  // Refund info for refunded status
+  body("refund.amount")
+    .optional()
+    .isFloat({ min: 0 })
+    .withMessage("Refund amount must be positive"),
+
+  body("refund.reason")
+    .optional()
+    .trim()
+    .isLength({ min: 5, max: 500 })
+    .withMessage("Refund reason must be between 5 and 500 characters"),
 ];
 
 /**
- * Validate add tracking info request
+ * Validation for adding tracking information
  */
-export const validateAddTrackingInfo = [
+export const validateAddTrackingInfo: ValidationChain[] = [
   param("id").isMongoId().withMessage("Invalid order ID"),
 
   body("carrier")
-    .trim()
     .notEmpty()
     .withMessage("Carrier is required")
-    .isLength({ max: 100 })
-    .withMessage("Carrier must be less than 100 characters"),
+    .trim()
+    .isLength({ min: 2, max: 100 })
+    .withMessage("Carrier name must be between 2 and 100 characters"),
 
   body("trackingNumber")
-    .trim()
     .notEmpty()
     .withMessage("Tracking number is required")
-    .isLength({ max: 100 })
-    .withMessage("Tracking number must be less than 100 characters"),
+    .trim()
+    .isLength({ min: 5, max: 100 })
+    .withMessage("Tracking number must be between 5 and 100 characters"),
 
   body("estimatedDeliveryDate")
     .optional()
     .isISO8601()
-    .withMessage("Estimated delivery date must be a valid date")
+    .withMessage("Invalid estimated delivery date")
     .custom((value) => {
       const date = new Date(value);
       const now = new Date();
-      if (date <= now) {
-        throw new Error("Estimated delivery date must be in the future");
+      if (date < now) {
+        throw new Error("Estimated delivery date cannot be in the past");
       }
       return true;
     }),
 ];
 
 /**
- * Validate cancel order request
+ * Validation for cancelling an order
  */
-export const validateCancelOrder = [
+export const validateCancelOrder: ValidationChain[] = [
   param("id").isMongoId().withMessage("Invalid order ID"),
 
   body("reason")
     .optional()
     .trim()
-    .isLength({ max: 500 })
-    .withMessage("Cancellation reason must be less than 500 characters"),
+    .isLength({ min: 5, max: 500 })
+    .withMessage("Cancellation reason must be between 5 and 500 characters"),
 ];
 
 /**
- * Validate update to paid request
+ * Validation for pagination
  */
-export const validateUpdateToPaid = [
-  param("id").isMongoId().withMessage("Invalid order ID"),
-
-  body("id").trim().notEmpty().withMessage("Payment ID is required"),
-
-  body("status").trim().notEmpty().withMessage("Payment status is required"),
-
-  body("update_time")
-    .trim()
-    .notEmpty()
-    .withMessage("Payment update time is required"),
-
-  body("email_address")
-    .isEmail()
-    .withMessage("Valid email address is required"),
-
-  body("payment_method")
-    .optional()
-    .trim()
-    .isLength({ max: 50 })
-    .withMessage("Payment method must be less than 50 characters"),
-
-  body("transaction_fee")
-    .optional()
-    .isFloat({ min: 0 })
-    .withMessage("Transaction fee must be a positive number"),
-];
-
-/**
- * Validate pagination parameters
- */
-export const validatePagination = [
+export const validatePagination: ValidationChain[] = [
   query("page")
     .optional()
-    .isInt({ min: 1, max: 1000 })
-    .withMessage("Page must be between 1 and 1000"),
+    .isInt({ min: 1 })
+    .withMessage("Page must be a positive integer"),
 
   query("limit")
     .optional()
     .isInt({ min: 1, max: 100 })
     .withMessage("Limit must be between 1 and 100"),
 
-  query("sort")
-    .optional()
-    .trim()
-    .matches(/^(-?[\w.]+)(,(-?[\w.]+))*$/)
-    .withMessage("Invalid sort format"),
+  query("sort").optional().isString().withMessage("Sort must be a string"),
 
   query("status")
     .optional()
@@ -337,25 +303,68 @@ export const validatePagination = [
       "on-hold",
       "failed",
       "completed",
-    ] as OrderStatus[])
+    ])
     .withMessage("Invalid status filter"),
 
-  query("user").optional().isMongoId().withMessage("Invalid user ID filter"),
+  query("isPaid")
+    .optional()
+    .isBoolean()
+    .withMessage("isPaid must be a boolean"),
+
+  query("isDelivered")
+    .optional()
+    .isBoolean()
+    .withMessage("isDelivered must be a boolean"),
 ];
 
 /**
- * Validate order ID parameter (can be ObjectId or order number)
+ * Validation for order search
  */
-export const validateOrderId = [
-  param("id").custom((value) => {
-    // Check if it's a valid MongoDB ObjectId
-    if (/^[0-9a-fA-F]{24}$/.test(value)) {
+export const validateOrderSearch: ValidationChain[] = [
+  query("q")
+    .notEmpty()
+    .withMessage("Search query is required")
+    .trim()
+    .isLength({ min: 2, max: 100 })
+    .withMessage("Search query must be between 2 and 100 characters"),
+];
+
+/**
+ * Validation for order export
+ */
+export const validateOrderExport: ValidationChain[] = [
+  query("startDate")
+    .optional()
+    .isISO8601()
+    .withMessage("Invalid start date format"),
+
+  query("endDate")
+    .optional()
+    .isISO8601()
+    .withMessage("Invalid end date format")
+    .custom((value, { req }) => {
+      if (req.query && req.query.startDate && value) {
+        const start = new Date(req.query.startDate as string);
+        const end = new Date(value);
+        if (end < start) {
+          throw new Error("End date must be after start date");
+        }
+      }
       return true;
-    }
-    // Check if it's a valid order number format (ORD-YYMMDD-XXXXXX)
-    if (/^ORD-\d{6}-\d{6}$/.test(value)) {
-      return true;
-    }
-    throw new Error("Invalid order ID or order number");
-  }),
+    }),
+
+  query("status")
+    .optional()
+    .isIn([
+      "pending",
+      "processing",
+      "shipped",
+      "delivered",
+      "cancelled",
+      "refunded",
+      "on-hold",
+      "failed",
+      "completed",
+    ])
+    .withMessage("Invalid status filter"),
 ];

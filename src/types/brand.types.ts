@@ -8,6 +8,7 @@ export interface BrandDocument extends Document {
   description?: string;
   logo?: string;
   website?: string;
+  isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
 }

@@ -1,18 +1,18 @@
-import { Document } from "mongoose";
+// src/types/order.types.ts
+import { Document, Types } from "mongoose";
 
 export interface OrderItem {
   name: string;
-  quantity: number; // Changed from qty to quantity for consistency
+  quantity: number;
   image: string;
   price: number;
-  product: string;
+  product: Types.ObjectId;
   variation?: {
-    // Changed from variant to variation for consistency
     size?: string;
     color?: string;
     material?: string;
     style?: string;
-    sku?: string; // Made optional to match validation
+    sku?: string;
   };
 }
 
@@ -72,7 +72,7 @@ export interface Refund {
 }
 
 export interface OrderDocument extends Document {
-  user: string;
+  user: Types.ObjectId;
   orderItems: OrderItem[];
   shippingAddress: ShippingAddress;
   paymentMethod: string;
@@ -81,14 +81,14 @@ export interface OrderDocument extends Document {
   taxPrice: number;
   shippingPrice: number;
   totalPrice: number;
-  subtotal: number; // Before tax and shipping
+  subtotal: number;
   discount?: Discount;
   discountAmount: number;
-  orderNumber: string; // Human-readable order ID
+  orderNumber: string;
   status: OrderStatus;
   statusHistory: StatusHistory[];
-  notes?: string; // Customer order notes
-  adminNotes?: string; // Internal notes
+  notes?: string;
+  adminNotes?: string;
   isPaid: boolean;
   paidAt?: Date;
   isDelivered: boolean;

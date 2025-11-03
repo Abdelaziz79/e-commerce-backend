@@ -12,6 +12,7 @@ export interface ReviewDocument extends Document {
   images?: string[];
   isVerifiedPurchase: boolean;
   helpfulVotes: number;
+  helpfulVotedBy: Types.ObjectId[]; // Track users who voted
   createdAt: Date;
   updatedAt: Date;
 }

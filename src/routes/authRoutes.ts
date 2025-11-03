@@ -5,15 +5,15 @@ import {
   registerUser,
   resetPassword,
   verifyEmail,
-} from "../controllers/userController";
-import { handleValidationErrors } from "../middleware/errorMiddleware";
-import { authRateLimiters } from "../middleware/rateLimit";
+} from "../controllers/authController";
 import {
   validateForgotPassword,
   validateResetPassword,
   validateUserLogin,
   validateUserRegistration,
-} from "../middleware/userValidationMiddleware";
+} from "../middleware/authValidationMiddleware";
+import { handleValidationErrors } from "../middleware/errorMiddleware";
+import { authRateLimiters } from "../middleware/rateLimit";
 
 const authRouter = express.Router();
 

@@ -49,6 +49,7 @@ export interface UserDocument extends Document {
   email: string;
   password: string;
   role: "user" | "admin";
+  avatar: string; // User profile avatar
   isEmailVerified: boolean;
   emailVerificationToken?: string;
   emailVerificationExpires?: Date;

@@ -1,6 +1,6 @@
 // src/middleware/reviewValidationMiddleware.ts
 
-import { body } from "express-validator";
+import { body, param } from "express-validator";
 
 export const validateCreateReview = [
   body("product").isMongoId().withMessage("A valid product ID is required"),
@@ -16,10 +16,6 @@ export const validateCreateReview = [
     .trim()
     .isLength({ max: 100 })
     .withMessage("Title cannot exceed 100 characters"),
-  body("images")
-    .optional()
-    .isArray({ max: 5 })
-    .withMessage("You can upload a maximum of 5 images"),
 ];
 
 export const validateUpdateReview = [
@@ -37,8 +33,12 @@ export const validateUpdateReview = [
     .trim()
     .isLength({ max: 100 })
     .withMessage("Title cannot exceed 100 characters"),
-  body("images")
-    .optional()
-    .isArray({ max: 5 })
-    .withMessage("You can upload a maximum of 5 images"),
+];
+
+export const validateReviewId = [
+  param("id").isMongoId().withMessage("Invalid review ID"),
+];
+
+export const validateProductId = [
+  param("productId").isMongoId().withMessage("Invalid product ID"),
 ];
