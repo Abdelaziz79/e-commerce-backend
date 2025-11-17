@@ -33,9 +33,9 @@ const cartItemSchema = new Schema(
       validate: {
         validator: function (img: string) {
           if (img.startsWith("http") || img.startsWith("https")) {
-            return /^https?:\/\/.*\.(jpg|jpeg|png|gif|webp)$/i.test(img);
+            return /^https?:\/\/.*\.(jpg|jpeg|png|gif|webp|avif)$/i.test(img);
           }
-          return /^\/.*\.(jpg|jpeg|png|gif|webp)$/i.test(img);
+          return /^\/.*\.(jpg|jpeg|png|gif|webp|avif)$/i.test(img);
         },
         message: "Image must be a valid URL or relative path",
       },
@@ -159,9 +159,9 @@ const userSchema = new Schema<UserDocument>(
       validate: {
         validator: function (img: string) {
           if (img.startsWith("http") || img.startsWith("https")) {
-            return /^https?:\/\/.*\.(jpg|jpeg|png|gif|webp)$/i.test(img);
+            return /^https?:\/\/.*\.(jpg|jpeg|png|gif|webp|avif)$/i.test(img);
           }
-          return /^\/.*\.(jpg|jpeg|png|gif|webp)$/i.test(img);
+          return /^\/.*\.(jpg|jpeg|png|gif|webp|avif)$/i.test(img);
         },
         message: "Avatar must be a valid URL or relative path",
       },

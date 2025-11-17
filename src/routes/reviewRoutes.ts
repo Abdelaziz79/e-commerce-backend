@@ -45,12 +45,12 @@ reviewRouter
   .route("/stats/:productId")
   .get(validateProductId, handleValidationErrors, getProductReviewStats);
 
+// Private routes - user reviews
+reviewRouter.route("/my-reviews").get(protect, getMyReviews);
+
 reviewRouter
   .route("/:id")
   .get(validateReviewId, handleValidationErrors, getReviewById);
-
-// Private routes - user reviews
-reviewRouter.route("/my-reviews").get(protect, getMyReviews);
 
 // Review creation with rate limiting and validation
 reviewRouter

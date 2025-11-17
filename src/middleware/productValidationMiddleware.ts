@@ -23,18 +23,18 @@ export const validateCreateProduct = [
     .optional()
     .custom((value) => {
       if (value.startsWith("http") || value.startsWith("https")) {
-        return /^https?:\/\/.*\.(jpg|jpeg|png|gif|webp)$/i.test(value);
+        return /^https?:\/\/.*\.(jpg|jpeg|png|gif|webp|avif)$/i.test(value);
       }
-      return /^\/.*\.(jpg|jpeg|png|gif|webp)$/i.test(value);
+      return /^\/.*\.(jpg|jpeg|png|gif|webp|avif)$/i.test(value);
     })
     .withMessage("Please provide valid image URLs or paths"),
   body("mainImage")
     .optional()
     .custom((value) => {
       if (value.startsWith("http") || value.startsWith("https")) {
-        return /^https?:\/\/.*\.(jpg|jpeg|png|gif|webp)$/i.test(value);
+        return /^https?:\/\/.*\.(jpg|jpeg|png|gif|webp|avif)$/i.test(value);
       }
-      return /^\/.*\.(jpg|jpeg|png|gif|webp)$/i.test(value);
+      return /^\/.*\.(jpg|jpeg|png|gif|webp|avif)$/i.test(value);
     })
     .withMessage("Please provide valid main image URL or path"),
   body("subcategories")
@@ -47,7 +47,7 @@ export const validateCreateProduct = [
     .withMessage("Each subcategory must be between 1 and 50 characters"),
   body("richDescription")
     .optional()
-    .isLength({ max: 5000 })
+    .isLength({ max: 10000 })
     .withMessage("Rich description cannot exceed 5000 characters"),
   body("hasVariations")
     .optional()
@@ -172,18 +172,18 @@ export const validateUpdateProduct = [
     .optional()
     .custom((value) => {
       if (value.startsWith("http") || value.startsWith("https")) {
-        return /^https?:\/\/.*\.(jpg|jpeg|png|gif|webp)$/i.test(value);
+        return /^https?:\/\/.*\.(jpg|jpeg|png|gif|webp|avif)$/i.test(value);
       }
-      return /^\/.*\.(jpg|jpeg|png|gif|webp)$/i.test(value);
+      return /^\/.*\.(jpg|jpeg|png|gif|webp|avif)$/i.test(value);
     })
     .withMessage("Please provide valid image URLs or paths"),
   body("mainImage")
     .optional()
     .custom((value) => {
       if (value.startsWith("http") || value.startsWith("https")) {
-        return /^https?:\/\/.*\.(jpg|jpeg|png|gif|webp)$/i.test(value);
+        return /^https?:\/\/.*\.(jpg|jpeg|png|gif|webp|avif)$/i.test(value);
       }
-      return /^\/.*\.(jpg|jpeg|png|gif|webp)$/i.test(value);
+      return /^\/.*\.(jpg|jpeg|png|gif|webp|avif)$/i.test(value);
     })
     .withMessage("Please provide valid main image URL or path"),
   body("hasVariations")
@@ -330,9 +330,9 @@ export const validateCreateReview = [
     .optional()
     .custom((value) => {
       if (value.startsWith("http") || value.startsWith("https")) {
-        return /^https?:\/\/.*\.(jpg|jpeg|png|gif|webp)$/i.test(value);
+        return /^https?:\/\/.*\.(jpg|jpeg|png|gif|webp|avif)$/i.test(value);
       }
-      return /^\/.*\.(jpg|jpeg|png|gif|webp)$/i.test(value);
+      return /^\/.*\.(jpg|jpeg|png|gif|webp|avif)$/i.test(value);
     })
     .withMessage("Please provide valid image URLs or paths"),
 ];
@@ -363,9 +363,9 @@ export const validateUpdateReview = [
     .optional()
     .custom((value) => {
       if (value.startsWith("http") || value.startsWith("https")) {
-        return /^https?:\/\/.*\.(jpg|jpeg|png|gif|webp)$/i.test(value);
+        return /^https?:\/\/.*\.(jpg|jpeg|png|gif|webp|avif)$/i.test(value);
       }
-      return /^\/.*\.(jpg|jpeg|png|gif|webp)$/i.test(value);
+      return /^\/.*\.(jpg|jpeg|png|gif|webp|avif)$/i.test(value);
     })
     .withMessage("Please provide valid image URLs or paths"),
 ];
@@ -430,4 +430,20 @@ export const validateLowStockQuery = [
     .optional()
     .isInt({ min: 0, max: 1000 })
     .withMessage("Threshold must be between 0 and 1000"),
+];
+
+// Validation for search query
+export const validateSearchQuery = [
+  query("q")
+    .trim()
+    .isLength({ min: 1, max: 100 })
+    .withMessage("Search query must be between 1 and 100 characters"),
+  query("page")
+    .optional()
+    .isInt({ min: 1, max: 1000 })
+    .withMessage("Page must be between 1 and 1000"),
+  query("limit")
+    .optional()
+    .isInt({ min: 1, max: 100 })
+    .withMessage("Limit must be between 1 and 100"),
 ];

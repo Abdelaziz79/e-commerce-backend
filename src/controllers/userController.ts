@@ -365,11 +365,11 @@ export const deleteUserAddress = catchAsync(
 );
 
 /**
- * @desc    Add product to favorites/wishlist
+ * @desc    Toggle product in favorites/wishlist
  * @route   POST /api/users/favorites
  * @access  Private
  */
-export const addToFavorites = catchAsync(
+export const toggleFavorite = catchAsync(
   async (req: AuthRequest, res: Response) => {
     if (!req.user) {
       return res.status(401).json({ message: "Authentication required" });
@@ -389,28 +389,35 @@ export const addToFavorites = catchAsync(
     }
 
     // Check if product already in favorites
-    const existingFavorite = user.favorites.find(
+    const favoriteIndex = user.favorites.findIndex(
       (item) => item.product.toString() === productId
     );
 
-    if (existingFavorite) {
-      return res.status(400).json({
-        message: "Product already in favorites",
-      });
-    }
+    let message: string;
+    let isAdded: boolean;
 
-    // Add to favorites
-    user.favorites.push({
-      product: productId,
-      addedAt: new Date(),
-    });
+    if (favoriteIndex !== -1) {
+      // Remove from favorites
+      user.favorites.splice(favoriteIndex, 1);
+      message = "Product removed from favorites successfully";
+      isAdded = false;
+    } else {
+      // Add to favorites
+      user.favorites.push({
+        product: productId,
+        addedAt: new Date(),
+      });
+      message = "Product added to favorites successfully";
+      isAdded = true;
+    }
 
     await user.save();
 
     res.status(200).json({
       status: "success",
-      message: "Product added to favorites successfully",
+      message,
       data: {
+        isAdded,
         favorites: user.favorites,
         favoritesCount: user.favorites.length,
       },

@@ -33,6 +33,25 @@ export const validateUpdateReview = [
     .trim()
     .isLength({ max: 100 })
     .withMessage("Title cannot exceed 100 characters"),
+  body("existingImages")
+    .optional()
+    .custom((value) => {
+      if (Array.isArray(value)) {
+        return true;
+      }
+      if (typeof value === "string") {
+        try {
+          const parsed = JSON.parse(value);
+          return Array.isArray(parsed);
+        } catch {
+          throw new Error("existingImages must be a valid JSON array");
+        }
+      }
+      throw new Error(
+        "existingImages must be an array or valid JSON array string"
+      );
+    })
+    .withMessage("existingImages must be an array"),
 ];
 
 export const validateReviewId = [

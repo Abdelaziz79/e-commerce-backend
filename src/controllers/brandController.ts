@@ -5,6 +5,7 @@ import { deleteImage, getImagePath } from "../middleware/uploadMiddleware";
 import Brand from "../models/brandModel";
 import APIFeatures from "../utils/apiFeatures";
 import catchAsync from "../utils/catchAsync";
+import mongoose from "mongoose";
 
 /**
  * @desc    Create a new brand
@@ -41,20 +42,27 @@ export const createBrand = catchAsync(async (req: Request, res: Response) => {
  * @access  Public
  */
 export const getAllBrands = catchAsync(async (req: Request, res: Response) => {
-  // Hardcode the filter to only include active brands for the public route
-  const features = new APIFeatures(Brand.find({ isActive: true }), req.query)
+  // Create a query that ONLY includes active brands
+  const activeBrandsQuery = Brand.find({ isActive: true });
+
+  const features = new APIFeatures(activeBrandsQuery, req.query)
     .filter()
     .sort()
     .limitFields()
     .paginate();
 
   const brands = await features.query;
-  const total = await features.getTotalCount();
+
+  // IMPORTANT: Count only ACTIVE brands for accurate pagination
+  const total = await Brand.countDocuments({
+    isActive: true,
+    ...features["filterConditions"],
+  });
 
   res.status(200).json({
     status: "success",
     results: brands.length,
-    total,
+    total, // This now correctly reflects ONLY active brands
     data: {
       brands,
     },
@@ -62,15 +70,15 @@ export const getAllBrands = catchAsync(async (req: Request, res: Response) => {
 });
 
 /**
- * @desc    Get ALL brands for administrators
+ * @desc    Get all brands for admin (including inactive)
  * @route   GET /api/v1/brands/admin/all
  * @access  Private/Admin
  */
 export const getAllBrandsAdmin = catchAsync(
   async (req: Request, res: Response) => {
-    // This route does not filter by isActive, returning all brands
+    // Admin sees ALL brands (no isActive filter)
     const features = new APIFeatures(Brand.find(), req.query)
-      .filter() // Admin can still use query filters like ?name=... or ?isActive=...
+      .filter()
       .sort()
       .limitFields()
       .paginate();
@@ -81,7 +89,7 @@ export const getAllBrandsAdmin = catchAsync(
     res.status(200).json({
       status: "success",
       results: brands.length,
-      total,
+      total, // This includes both active and inactive
       data: {
         brands,
       },
@@ -95,7 +103,16 @@ export const getAllBrandsAdmin = catchAsync(
  * @access  Public
  */
 export const getBrandById = catchAsync(async (req: Request, res: Response) => {
-  const brand = await Brand.findById(req.params.id);
+  const { id } = req.params;
+
+  // Check if the parameter is a valid MongoDB ObjectId
+  const isValidObjectId =
+    mongoose.Types.ObjectId.isValid(id) && /^[0-9a-fA-F]{24}$/.test(id);
+
+  // Query by _id if valid ObjectId, otherwise query by slug
+  const query = isValidObjectId ? { _id: id } : { slug: id };
+
+  const brand = await Brand.findOne(query);
 
   if (!brand || brand.isActive === false) {
     return res.status(404).json({ message: "Brand not found" });
@@ -108,7 +125,6 @@ export const getBrandById = catchAsync(async (req: Request, res: Response) => {
     },
   });
 });
-
 /**
  * @desc    Update a brand
  * @route   PUT /api/v1/brands/:id

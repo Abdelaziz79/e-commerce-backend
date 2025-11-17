@@ -1,30 +1,29 @@
-// src/routes/productRoutes.ts
-
 import express from "express";
 import {
+  adjustStock,
+  bulkDeleteProducts,
+  bulkUpdateProducts,
   createProduct,
   deleteProduct,
   getFeaturedProducts,
+  getLowStockProducts,
   getOnSaleProducts,
   getProductById,
   getProducts,
-  updateProduct,
-  searchProducts,
   getProductStats,
-  bulkUpdateProducts,
-  bulkDeleteProducts,
-  getLowStockProducts,
-  adjustStock,
+  searchProducts,
+  updateProduct,
 } from "../controllers/productController";
 import { admin, protect } from "../middleware/authMiddleware";
 import { handleValidationErrors } from "../middleware/errorMiddleware";
 import {
-  validateCreateProduct,
-  validateUpdateProduct,
-  validateBulkUpdate,
   validateBulkDelete,
-  validateStockAdjustment,
+  validateBulkUpdate,
+  validateCreateProduct,
   validateLowStockQuery,
+  validateSearchQuery,
+  validateStockAdjustment,
+  validateUpdateProduct,
 } from "../middleware/productValidationMiddleware";
 import {
   generalRateLimiters,
@@ -37,14 +36,29 @@ const productRouter = express.Router();
 // Apply general rate limiting to all routes
 productRouter.use(generalRateLimiters.api);
 
-// Public routes - Order matters! Specific routes before :id parameter
-productRouter.route("/featured").get(getFeaturedProducts);
-productRouter.route("/sale").get(getOnSaleProducts);
-productRouter.route("/search").get(searchProducts);
+// ============================================================================
+// PUBLIC ROUTES - Order matters! Specific routes before :id parameter
+// ============================================================================
 
-// Admin-only query routes
+// Featured products
+productRouter.route("/featured").get(getFeaturedProducts);
+
+// Products on sale
+productRouter.route("/sale").get(getOnSaleProducts);
+
+// Search products - WITH VALIDATION
+productRouter
+  .route("/search")
+  .get(validateSearchQuery, handleValidationErrors, searchProducts);
+
+// ============================================================================
+// ADMIN-ONLY QUERY ROUTES
+// ============================================================================
+
+// Product statistics
 productRouter.route("/stats").get(protect, admin, getProductStats);
 
+// Low stock products
 productRouter
   .route("/low-stock")
   .get(
@@ -75,7 +89,11 @@ productRouter
     bulkDeleteProducts
   );
 
-// Main product CRUD routes
+// ============================================================================
+// MAIN PRODUCT CRUD ROUTES
+// ============================================================================
+
+// Get all products / Create product
 productRouter
   .route("/")
   .get(getProducts)
@@ -89,7 +107,11 @@ productRouter
     createProduct
   );
 
-// Stock adjustment route (must come before /:id to avoid conflict)
+// ============================================================================
+// SPECIFIC PRODUCT ROUTES (must come before /:id to avoid conflicts)
+// ============================================================================
+
+// Stock adjustment route
 productRouter
   .route("/:id/stock")
   .patch(
@@ -101,7 +123,10 @@ productRouter
     adjustStock
   );
 
-// Single product operations (/:id must be last to avoid route conflicts)
+// ============================================================================
+// SINGLE PRODUCT OPERATIONS (/:id must be last to avoid route conflicts)
+// ============================================================================
+
 productRouter
   .route("/:id")
   .get(getProductById)

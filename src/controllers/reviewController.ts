@@ -152,18 +152,48 @@ export const updateReview = catchAsync(
         .json({ message: "You are not authorized to update this review" });
     }
 
-    // Handle image updates
-    if (req.files && Array.isArray(req.files)) {
-      // Delete old images if exists
-      if (review.images && review.images.length > 0) {
-        review.images.forEach((imagePath) => deleteImage(imagePath));
-      }
+    // FIXED: Properly parse existingImages
+    let existingImages: string[] = [];
 
-      // Add new images
-      req.body.images = req.files.map((file) =>
+    if (req.body.existingImages) {
+      if (Array.isArray(req.body.existingImages)) {
+        existingImages = req.body.existingImages;
+      } else if (typeof req.body.existingImages === "string") {
+        try {
+          existingImages = JSON.parse(req.body.existingImages);
+        } catch (error) {
+          existingImages = [];
+        }
+      }
+    }
+
+    // Delete images that are no longer in existingImages
+    if (review.images && review.images.length > 0) {
+      review.images.forEach((imagePath) => {
+        // Only delete if not in existingImages array
+        if (!existingImages.includes(imagePath)) {
+          console.log("Deleting removed image:", imagePath);
+          deleteImage(imagePath);
+        }
+      });
+    }
+
+    // Start with existing images that user wants to keep
+    let finalImages = [...existingImages];
+
+    // Add new uploaded images
+    if (req.files && Array.isArray(req.files) && req.files.length > 0) {
+      const newImagePaths = req.files.map((file) =>
         getImagePath(file.filename, "reviews")
       );
+      finalImages = [...finalImages, ...newImagePaths];
     }
+
+    // Update req.body with the final images array
+    req.body.images = finalImages;
+
+    // Remove existingImages from req.body as it's not a model field
+    delete req.body.existingImages;
 
     const updatedReview = await Review.findByIdAndUpdate(
       req.params.id,
@@ -279,10 +309,21 @@ export const voteReviewHelpful = catchAsync(
  */
 export const getMyReviews = catchAsync(
   async (req: AuthRequest, res: Response) => {
-    const features = new APIFeatures(
-      Review.find({ user: req.user!._id }),
-      req.query
-    )
+    // Build filter query
+    const filterQuery: any = { user: req.user!._id };
+
+    // Add rating filter if provided
+    if (req.query.rating) {
+      filterQuery.rating = parseInt(req.query.rating as string);
+    }
+
+    // Add verified purchase filter if provided
+    if (req.query.verified === "true") {
+      filterQuery.isVerifiedPurchase = true;
+    }
+
+    const features = new APIFeatures(Review.find(filterQuery), req.query)
+      .filter()
       .sort()
       .limitFields()
       .paginate();
@@ -293,12 +334,54 @@ export const getMyReviews = catchAsync(
     );
     const total = await features.getTotalCount();
 
+    // Get stats for all user reviews (not filtered)
+    const allReviewsStats = await Review.aggregate([
+      { $match: { user: req.user!._id } },
+      {
+        $group: {
+          _id: null,
+          totalReviews: { $sum: 1 },
+          avgRating: { $avg: "$rating" },
+          totalHelpfulVotes: { $sum: "$helpfulVotes" },
+        },
+      },
+    ]);
+
+    // Get rating breakdown
+    const ratingBreakdown = await Review.aggregate([
+      { $match: { user: req.user!._id } },
+      { $group: { _id: "$rating", count: { $sum: 1 } } },
+      { $sort: { _id: -1 } },
+    ]);
+
+    // Get verified count
+    const verifiedCount = await Review.countDocuments({
+      user: req.user!._id,
+      isVerifiedPurchase: true,
+    });
+
+    const stats = allReviewsStats[0] || {
+      totalReviews: 0,
+      avgRating: 0,
+      totalHelpfulVotes: 0,
+    };
+
     res.status(200).json({
       status: "success",
       results: reviews.length,
       total,
       data: {
         reviews,
+      },
+      stats: {
+        totalReviews: stats.totalReviews,
+        avgRating: parseFloat(stats.avgRating.toFixed(1)),
+        totalHelpfulVotes: stats.totalHelpfulVotes,
+        verifiedCount,
+        ratingBreakdown: ratingBreakdown.reduce((acc, item) => {
+          acc[item._id] = item.count;
+          return acc;
+        }, {} as Record<number, number>),
       },
     });
   }

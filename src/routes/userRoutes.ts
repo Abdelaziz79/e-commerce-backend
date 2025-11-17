@@ -7,7 +7,7 @@ import {
   updateCartItem,
 } from "../controllers/cartController";
 import {
-  addToFavorites,
+  toggleFavorite,
   addUserAddress,
   deleteAvatar,
   deleteUserAddress,
@@ -130,7 +130,7 @@ userRouter
     ecommerceRateLimiters.favorites,
     validateFavoriteItem,
     handleValidationErrors,
-    addToFavorites
+    toggleFavorite
   );
 
 userRouter

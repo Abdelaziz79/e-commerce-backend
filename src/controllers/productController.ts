@@ -30,7 +30,9 @@ export const getProducts = catchAsync(async (req: Request, res: Response) => {
   // --- FIX END ---
 
   const features = new APIFeatures(
-    Product.find().populate("category brand"),
+    Product.find()
+      .populate({ path: "category", select: "name slug" })
+      .populate({ path: "brand", select: "name slug" }),
     req.query
   )
     .filter()
@@ -114,12 +116,23 @@ export const getProductById = catchAsync(
       query = Product.findOne({ slug: id });
     }
 
-    const product = await query.populate("category brand").populate("reviews");
+    const product = await query
+      .populate({ path: "category", select: "name slug" })
+      .populate({ path: "brand", select: "name slug" })
+      // .populate("reviews")
+      .populate({
+        path: "relatedProducts",
+        select:
+          "name slug price salePrice onSale images mainImage countInStock rating numReviews brand category featured isNewProduct",
+        populate: [
+          { path: "brand", select: "name slug" },
+          { path: "category", select: "name slug" },
+        ],
+      });
 
     if (!product) {
       return res.status(404).json({ message: "Product not found" });
     }
-
     res.status(200).json({
       status: "success",
       data: product,
@@ -134,7 +147,12 @@ export const getProductById = catchAsync(
  */
 export const createProduct = catchAsync(
   async (req: AuthRequest, res: Response) => {
-    const { name, mainImageIndex } = req.body;
+    const {
+      name,
+      mainImageIndex,
+      images: imageUrls,
+      mainImage: mainImageUrl,
+    } = req.body;
     const slug = slugify(name, { lower: true, strict: true });
 
     // Check if product with similar name exists
@@ -161,21 +179,21 @@ export const createProduct = catchAsync(
       });
     }
 
-    // Handle uploaded images
+    // Handle images - prioritize uploaded files, fallback to URLs from body
     let imagePaths: string[] = [];
     let mainImagePath: string | undefined;
 
     if (req.files) {
       const files = req.files as { [fieldname: string]: Express.Multer.File[] };
 
-      // Handle regular images
+      // Handle regular images from file upload
       if (files.images) {
         imagePaths = files.images.map((file) =>
           getImagePath(file.filename, "products")
         );
       }
 
-      // Handle main image - either separate upload or index from images array
+      // Handle main image from file upload
       if (files.mainImage && files.mainImage.length > 0) {
         mainImagePath = getImagePath(files.mainImage[0].filename, "products");
       } else if (
@@ -187,6 +205,23 @@ export const createProduct = catchAsync(
         // Default to first image if no mainImage specified
         mainImagePath = imagePaths[0];
       }
+    }
+
+    // If no files uploaded, use URL strings from body
+    if (imagePaths.length === 0 && imageUrls && Array.isArray(imageUrls)) {
+      imagePaths = imageUrls;
+    }
+
+    if (!mainImagePath && mainImageUrl) {
+      mainImagePath = mainImageUrl;
+    } else if (
+      !mainImagePath &&
+      mainImageIndex !== undefined &&
+      imagePaths[parseInt(mainImageIndex)]
+    ) {
+      mainImagePath = imagePaths[parseInt(mainImageIndex)];
+    } else if (!mainImagePath && imagePaths.length > 0) {
+      mainImagePath = imagePaths[0];
     }
 
     const product = new Product({
@@ -211,7 +246,11 @@ export const createProduct = catchAsync(
  */
 export const updateProduct = catchAsync(
   async (req: AuthRequest, res: Response) => {
-    const { mainImageIndex } = req.body;
+    const {
+      mainImageIndex,
+      images: imageUrls,
+      mainImage: mainImageUrl,
+    } = req.body;
 
     // find product
     const product = await Product.findById(req.params.id);
@@ -256,43 +295,77 @@ export const updateProduct = catchAsync(
 
     let newImagePaths: string[] = [];
     let newMainImagePath: string | undefined;
+    let shouldDeleteOldImages = false;
 
-    // Handle uploaded images
+    // Handle uploaded files
     if (req.files) {
       const files = req.files as { [fieldname: string]: Express.Multer.File[] };
 
-      // Handle regular images
+      // Handle regular images from file upload
       if (files.images) {
-        // delete old images
-        if (product.images && product.images.length > 0) {
-          product.images.forEach((imagePath) => deleteImage(imagePath));
-        }
-
-        // assign new images
+        shouldDeleteOldImages = true;
         newImagePaths = files.images.map((file) =>
           getImagePath(file.filename, "products")
         );
-        req.body.images = newImagePaths;
       }
 
-      // Handle main image
+      // Handle main image from file upload
       if (files.mainImage && files.mainImage.length > 0) {
-        // Delete old main image if it exists and is different from current images
-        if (product.mainImage && !product.images?.includes(product.mainImage)) {
-          deleteImage(product.mainImage);
-        }
-
         newMainImagePath = getImagePath(
           files.mainImage[0].filename,
           "products"
         );
-        req.body.mainImage = newMainImagePath;
       } else if (
         mainImageIndex !== undefined &&
         newImagePaths[parseInt(mainImageIndex)]
       ) {
-        req.body.mainImage = newImagePaths[parseInt(mainImageIndex)];
+        newMainImagePath = newImagePaths[parseInt(mainImageIndex)];
       }
+    }
+
+    // If no files uploaded but URLs provided in body, use those
+    if (newImagePaths.length === 0 && imageUrls && Array.isArray(imageUrls)) {
+      shouldDeleteOldImages = true;
+      newImagePaths = imageUrls;
+    }
+
+    if (!newMainImagePath && mainImageUrl) {
+      newMainImagePath = mainImageUrl;
+    } else if (
+      !newMainImagePath &&
+      mainImageIndex !== undefined &&
+      newImagePaths[parseInt(mainImageIndex)]
+    ) {
+      newMainImagePath = newImagePaths[parseInt(mainImageIndex)];
+    }
+
+    // Delete old images if we have new ones
+    if (shouldDeleteOldImages && product.images && product.images.length > 0) {
+      product.images.forEach((imagePath) => {
+        // Only delete local file paths, not URLs
+        if (imagePath.startsWith("/")) {
+          deleteImage(imagePath);
+        }
+      });
+    }
+
+    // Delete old main image if it's being replaced and it's a local file
+    if (
+      newMainImagePath &&
+      product.mainImage &&
+      product.mainImage !== newMainImagePath &&
+      !product.images?.includes(product.mainImage) &&
+      product.mainImage.startsWith("/")
+    ) {
+      deleteImage(product.mainImage);
+    }
+
+    // Update request body with new image paths
+    if (newImagePaths.length > 0) {
+      req.body.images = newImagePaths;
+    }
+    if (newMainImagePath) {
+      req.body.mainImage = newMainImagePath;
     }
 
     const updatedProduct = await Product.findByIdAndUpdate(
@@ -336,7 +409,7 @@ export const deleteProduct = catchAsync(
 );
 
 /**
- * @desc    Search products
+ * @desc    Search products with enhanced query
  * @route   GET /api/products/search
  * @access  Public
  */
@@ -344,6 +417,7 @@ export const searchProducts = catchAsync(
   async (req: Request, res: Response) => {
     const { q, limit = 10, page = 1 } = req.query;
 
+    // Validation is already handled by middleware, but double-check
     if (!q || typeof q !== "string") {
       return res.status(400).json({
         status: "fail",
@@ -351,11 +425,15 @@ export const searchProducts = catchAsync(
       });
     }
 
+    // Enhanced search query - searches across multiple fields
     const searchQuery = {
       $or: [
         { name: { $regex: q, $options: "i" } },
         { description: { $regex: q, $options: "i" } },
+        { richDescription: { $regex: q, $options: "i" } },
         { tags: { $regex: q, $options: "i" } },
+        // Optional: Search in variation SKUs if you want
+        // { "variations.sku": { $regex: q, $options: "i" } },
       ],
     };
 
@@ -363,12 +441,15 @@ export const searchProducts = catchAsync(
     const pageNum = Number(page);
     const skip = (pageNum - 1) * limitNum;
 
+    // Execute search with populated references
     const products = await Product.find(searchQuery)
-      .populate("category brand")
+      .populate({ path: "category", select: "name slug" })
+      .populate({ path: "brand", select: "name slug" })
       .limit(limitNum)
       .skip(skip)
       .sort("-createdAt");
 
+    // Get total count for pagination
     const total = await Product.countDocuments(searchQuery);
 
     res.status(200).json({
