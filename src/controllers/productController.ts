@@ -16,21 +16,38 @@ import catchAsync from "../utils/catchAsync";
  * @access  Public
  */
 export const getProducts = catchAsync(async (req: Request, res: Response) => {
-  // --- FIX START ---
-  // Add a safeguard to prevent a CastError if the frontend sends 'undefined'
-  // as a query parameter value.
-  if (req.query.brand === "undefined") {
-    delete req.query.brand;
-  }
+  // Safeguard: Remove undefined string values
+  if (req.query.brand === "undefined") delete req.query.brand;
+  if (req.query.category === "undefined") delete req.query.category;
 
-  if (req.query.category === "undefined") {
-    delete req.query.category;
-  }
+  // --- SEARCH LOGIC START ---
+  // Build a base query if 'search' param is present
+  let baseQuery = {};
 
-  // --- FIX END ---
+  // Check for 'search' param (sent from frontend) or 'q' (common convention)
+  const searchTerm = req.query.search || req.query.q;
+  if (searchTerm) {
+    const searchRegex = { $regex: searchTerm, $options: "i" };
+    baseQuery = {
+      $or: [
+        { name: searchRegex },
+        { description: searchRegex },
+        { richDescription: searchRegex },
+        { tags: searchRegex },
+        // Optional: Search by variation SKU if needed
+        // { "variations.sku": searchRegex }
+      ],
+    };
+
+    // Remove search params from req.query so APIFeatures doesn't try
+    // to match them as exact field names
+    delete req.query.search;
+    delete req.query.q;
+  }
+  // --- SEARCH LOGIC END ---
 
   const features = new APIFeatures(
-    Product.find()
+    Product.find(baseQuery) // Initialize find with our search logic
       .populate({ path: "category", select: "name slug" })
       .populate({ path: "brand", select: "name slug" }),
     req.query
