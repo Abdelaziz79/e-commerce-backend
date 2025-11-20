@@ -6,7 +6,6 @@ import path from "path";
 import config from "./config/config";
 import connectDB from "./config/db";
 import {
-  errorHandler,
   handleUploadError,
   notFound,
 } from "./middleware/errorMiddleware";
@@ -17,6 +16,7 @@ import orderRoutes from "./routes/orderRoutes";
 import productRoutes from "./routes/productRoutes";
 import reviewRoutes from "./routes/reviewRoutes";
 import userRoutes from "./routes/userRoutes";
+import { globalErrorHandling } from "./utils";
 
 // Connect to MongoDB
 connectDB();
@@ -65,13 +65,13 @@ app.use(handleUploadError);
 // 2. Handle 404 errors
 app.use(notFound);
 // 3. Handle all other errors
-app.use(errorHandler);
+app.use(globalErrorHandling);
 
 // Start server
 const PORT = config.port;
 app.listen(PORT, () => {
   console.log(`Server running in ${config.env} mode on port ${PORT}`);
-});
+}); 
 
 // Handle unhandled promise rejections
 process.on("unhandledRejection", (err: Error) => {

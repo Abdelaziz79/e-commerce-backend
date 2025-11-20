@@ -10,43 +10,43 @@ export const notFound = (req: Request, res: Response, next: NextFunction) => {
 };
 
 // Custom Error Handler
-export const errorHandler = (
-  err: Error,
-  req: Request,
-  res: Response,
-  next: NextFunction
-) => {
-  // Check if response status code is 200 (default) and set it to 500 if so
-  const statusCode = res.statusCode === 200 ? 500 : res.statusCode;
-  res.status(statusCode);
+// export const errorHandler = (
+//   err: Error,
+//   req: Request,
+//   res: Response,
+//   next: NextFunction
+// ) => {
+//   // Check if response status code is 200 (default) and set it to 500 if so
+//   const statusCode = res.statusCode === 200 ? 500 : res.statusCode;
+//   res.status(statusCode);
 
-  // Enhanced error response
-  const errorResponse: any = {
-    status: "error",
-    message: err.message,
-  };
+//   // Enhanced error response
+//   const errorResponse: any = {
+//     status: "error",
+//     message: err.message,
+//   };
 
-  // Add stack trace only in development
-  if (process.env.NODE_ENV === "development") {
-    errorResponse.stack = err.stack;
-  }
+//   // Add stack trace only in development
+//   if (process.env.NODE_ENV === "development") {
+//     errorResponse.stack = err.stack;
+//   }
 
-  // Handle specific error types
-  if (err.name === "ValidationError") {
-    errorResponse.message = "Validation Error";
-    errorResponse.errors = err.message;
-  }
+//   // Handle specific error types
+//   if (err.name === "ValidationError") {
+//     errorResponse.message = "Validation Error";
+//     errorResponse.errors = err.message;
+//   }
 
-  if (err.name === "CastError") {
-    errorResponse.message = "Invalid ID format";
-  }
+//   if (err.name === "CastError") {
+//     errorResponse.message = "Invalid ID format";
+//   }
 
-  if ((err as any).code === 11000) {
-    errorResponse.message = "Duplicate field value entered";
-  }
+//   if ((err as any).code === 11000) {
+//     errorResponse.message = "Duplicate field value entered";
+//   }
 
-  res.json(errorResponse);
-};
+//   res.json(errorResponse);
+// };
 
 // Validation Error Handler
 export const handleValidationErrors = (

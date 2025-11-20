@@ -9,236 +9,276 @@ import {
   sendVerificationEmail,
 } from "../utils/emailService";
 import generateToken from "../utils/generateToken";
+import { UserRepository } from "../db/repositories/user.repository";
+import {
+  conflictException,
+  notFoundException,
+  successResponse,
+} from "../utils";
 
-/**
- * @desc    Auth user & get token
- * @route   POST /api/users/login
- * @access  Public
- */
-export const loginUser = catchAsync(async (req: Request, res: Response) => {
-  const { email, password } = req.body;
+export class AuthController {
+  private userModel = new UserRepository(User);
 
-  const user = (await User.findOne({ email }).select(
-    "+password"
-  )) as UserDocument | null;
+  /**
+   * @desc    Auth user & get token
+   * @route   POST /api/users/login
+   * @access  Public
+   */
+  // export const loginUser = catchAsync(async (req: Request, res: Response) => {
+  //   const { email, password } = req.body;
 
-  if (!user) {
-    return res.status(401).json({ message: "Invalid email or password" });
-  }
+  //   const user = (await User.findOne({ email }).select(
+  //     "+password"
+  //   )) as UserDocument | null;
 
-  const isMatch = await user.comparePassword(password);
+  //   if (!user) {
+  //     return res.status(401).json({ message: "Invalid email or password" });
+  //   }
 
-  if (!isMatch) {
-    return res.status(401).json({ message: "Invalid email or password" });
-  }
+  //   const isMatch = await user.comparePassword(password);
 
-  res.status(200).json({
-    status: "success",
-    data: {
-      _id: user._id,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      isEmailVerified: user.isEmailVerified,
-      token: generateToken(user._id),
-    },
-  });
-});
+  //   if (!isMatch) {
+  //     return res.status(401).json({ message: "Invalid email or password" });
+  //   }
 
-/**
- * @desc    Register a new user
- * @route   POST /api/users
- * @access  Public
- */
-export const registerUser = catchAsync(async (req: Request, res: Response) => {
-  const { name, email, password, phone } = req.body;
+  //   res.status(200).json({
+  //     status: "success",
+  //     data: {
+  //       _id: user._id,
+  //       name: user.name,
+  //       email: user.email,
+  //       role: user.role,
+  //       isEmailVerified: user.isEmailVerified,
+  //       token: generateToken(user._id),
+  //     },
+  //   });
+  // });
 
-  // Check if user exists
-  const userExists = await User.findOne({ email });
+  /**
+   * @desc    Register a new user
+   * @route   POST /api/users
+   * @access  Public
+   */
+  RegisterUser = async (req: Request, res: Response): Promise<Response> => {
+    const { name, email, password, phone } = req.body;
 
-  if (userExists) {
-    return res.status(400).json({ message: "User already exists" });
-  }
+    const checkUserExists = await this.userModel.findOne({ filter: { email } });
 
-  // Create new user
-  const user = (await User.create({
-    name,
-    email,
-    password,
-    phone,
-  })) as UserDocument;
+    if (checkUserExists) {
+      throw new conflictException("User already exists");
+    }
 
-  // Generate email verification token
-  const verificationToken = user.createEmailVerificationToken();
-  await user.save({ validateBeforeSave: false });
-
-  // Create verification URL
-  const verificationURL = `${config.frontendBaseUrl}/verify-email/${verificationToken}`;
-
-  try {
-    // Send verification email
-    await sendVerificationEmail(user.email, user.name, verificationURL);
-
-    res.status(201).json({
-      status: "success",
-      data: {
-        _id: user._id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        isEmailVerified: user.isEmailVerified,
-        token: generateToken(user._id),
-      },
-      // In a real application, you would remove the following line
-      verificationURL: verificationURL,
-    });
-  } catch (err) {
-    // If there's an error sending the email, reset the token fields but keep the user
-    user.emailVerificationToken = undefined;
-    user.emailVerificationExpires = undefined;
-    await user.save({ validateBeforeSave: false });
-
-    return res.status(201).json({
-      status: "success",
-      message:
-        "User registered successfully but verification email could not be sent",
-      data: {
-        _id: user._id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        isEmailVerified: user.isEmailVerified,
-        token: generateToken(user._id),
-      },
-    });
-  }
-});
-
-/**
- * @desc    Request password reset
- * @route   POST /api/users/forgot-password
- * @access  Public
- */
-export const forgotPassword = catchAsync(
-  async (req: Request, res: Response) => {
-    const { email } = req.body;
-
-    const user = await User.findOne({ email });
+    const user =
+      (await this.userModel.create({
+        data: [
+          {
+            name,
+            email,
+            password,
+            phone,
+          },
+        ],
+        options: { validateBeforeSave: true },
+      })) || [];
 
     if (!user) {
-      return res.status(404).json({ message: "No user found with that email" });
+      throw new notFoundException("User not found");
     }
 
-    // Generate reset token
-    const resetToken = user.createPasswordResetToken();
-    await user.save({ validateBeforeSave: false });
+    return successResponse({ res, message: "User registered successfully , please confirm your email" });
+  };
 
-    // Create reset URL
-    const resetURL = `${config.frontendBaseUrl}/reset-password/${resetToken}`;
+  // export const registerUser = catchAsync(async (req: Request, res: Response) => {
+  //   const { name, email, password, phone } = req.body;
 
-    // In a production environment, you would send an email with the reset URL
-    // For this implementation, we'll just return the token in the response
-    // NOTE: In a real application, you would NOT send the token in the response for security reasons
+  //   // Check if user exists
+  //   const userExists = await User.findOne({ email });
 
-    try {
-      // Send password reset email
-      await sendPasswordResetEmail(user.email, user.name, resetURL);
+  //   if (userExists) {
+  //     return res.status(400).json({ message: "User already exists" });
+  //   }
 
-      res.status(200).json({
-        status: "success",
-        message: "Password reset token sent to email",
-        // In a real application, you would remove the following line
-        resetURL: resetURL,
-      });
-    } catch (err) {
-      // If there's an error sending the email, reset the token fields
-      user.passwordResetToken = undefined;
-      user.passwordResetExpires = undefined;
-      await user.save({ validateBeforeSave: false });
+  //   // Create new user
+  //   const user = (await User.create({
+  //     name,
+  //     email,
+  //     password,
+  //     phone,
+  //   })) as UserDocument;
 
-      return res.status(500).json({
-        status: "error",
-        message: "There was an error sending the email. Try again later.",
-      });
-    }
-  }
-);
+  //   // Generate email verification token
+  //   const verificationToken = user.createEmailVerificationToken();
+  //   await user.save({ validateBeforeSave: false });
 
-/**
- * @desc    Verify user email
- * @route   GET /api/users/verify-email/:token
- * @access  Public
- */
-export const verifyEmail = catchAsync(async (req: Request, res: Response) => {
-  const { token } = req.params;
+  //   // Create verification URL
+  //   // const verificationURL = `${config.frontendBaseUrl}/verify-email/${verificationToken}`;
 
-  // Hash the token from the URL to compare with stored hashed token
-  const hashedToken = crypto.createHash("sha256").update(token).digest("hex");
+  //   try {
+  //     // Send verification email
+  //     // await sendVerificationEmail(user.email, user.name, verificationURL);
 
-  // Find user with the token and check if token is still valid
-  const user = await User.findOne({
-    emailVerificationToken: hashedToken,
-    emailVerificationExpires: { $gt: Date.now() },
-  });
+  //     res.status(201).json({
+  //       status: "success",
+  //       data: {
+  //         _id: user._id,
+  //         name: user.name,
+  //         email: user.email,
+  //         role: user.role,
+  //         isEmailVerified: user.isEmailVerified,
+  //         token: generateToken(user._id),
+  //       },
+  //       // In a real application, you would remove the following line
+  //       // verificationURL: verificationURL,
+  //     });
+  //   } catch (err) {
+  //     // If there's an error sending the email, reset the token fields but keep the user
+  //     user.emailVerificationToken = undefined;
+  //     user.emailVerificationExpires = undefined;
+  //     await user.save({ validateBeforeSave: false });
 
-  if (!user) {
-    return res.status(400).json({
-      status: "fail",
-      message: "Token is invalid or has expired",
-    });
-  }
+  //     return res.status(201).json({
+  //       status: "success",
+  //       message:
+  //         "User registered successfully but verification email could not be sent",
+  //       data: {
+  //         _id: user._id,
+  //         name: user.name,
+  //         email: user.email,
+  //         role: user.role,
+  //         isEmailVerified: user.isEmailVerified,
+  //         token: generateToken(user._id),
+  //       },
+  //     });
+  //   }
+  // });
 
-  // Update user verification status
-  user.isEmailVerified = true;
-  user.emailVerificationToken = undefined;
-  user.emailVerificationExpires = undefined;
-  await user.save({ validateBeforeSave: false });
+  /**
+   * @desc    Request password reset
+   * @route   POST /api/users/forgot-password
+   * @access  Public
+   */
+  // export const forgotPassword = catchAsync(
+  //   async (req: Request, res: Response) => {
+  //     const { email } = req.body;
 
-  res.status(200).json({
-    status: "success",
-    message: "Email verified successfully",
-  });
-});
+  //     const user = await User.findOne({ email });
 
-/**
- * @desc    Reset password
- * @route   POST /api/users/reset-password/:token
- * @access  Public
- */
-export const resetPassword = catchAsync(async (req: Request, res: Response) => {
-  const { token } = req.params;
-  const { password } = req.body;
+  //     if (!user) {
+  //       return res.status(404).json({ message: "No user found with that email" });
+  //     }
 
-  // Hash the token from the URL to compare with stored hashed token
-  const hashedToken = crypto.createHash("sha256").update(token).digest("hex");
+  //     // Generate reset token
+  //     const resetToken = user.createPasswordResetToken();
+  //     await user.save({ validateBeforeSave: false });
 
-  // Find user with the token and check if token is still valid
-  const user = await User.findOne({
-    passwordResetToken: hashedToken,
-    passwordResetExpires: { $gt: Date.now() },
-  });
+  //     // Create reset URL
+  //     const resetURL = `${config.frontendBaseUrl}/reset-password/${resetToken}`;
 
-  if (!user) {
-    return res.status(400).json({
-      status: "fail",
-      message: "Token is invalid or has expired",
-    });
-  }
+  //     // In a production environment, you would send an email with the reset URL
+  //     // For this implementation, we'll just return the token in the response
+  //     // NOTE: In a real application, you would NOT send the token in the response for security reasons
 
-  // Update password and clear reset token fields
-  user.password = password;
-  user.passwordResetToken = undefined;
-  user.passwordResetExpires = undefined;
-  await user.save();
+  //     try {
+  //       // Send password reset email
+  //       await sendPasswordResetEmail(user.email, user.name, resetURL);
 
-  // Generate new JWT token for the user
-  const jwtToken = generateToken(user._id);
+  //       res.status(200).json({
+  //         status: "success",
+  //         message: "Password reset token sent to email",
+  //         // In a real application, you would remove the following line
+  //         resetURL: resetURL,
+  //       });
+  //     } catch (err) {
+  //       // If there's an error sending the email, reset the token fields
+  //       user.passwordResetToken = undefined;
+  //       user.passwordResetExpires = undefined;
+  //       await user.save({ validateBeforeSave: false });
 
-  res.status(200).json({
-    status: "success",
-    message: "Password reset successfully",
-    data: {
-      token: jwtToken,
-    },
-  });
-});
+  //       return res.status(500).json({
+  //         status: "error",
+  //         message: "There was an error sending the email. Try again later.",
+  //       });
+  //     }
+  //   }
+  // );
+
+  /**
+   * @desc    Verify user email
+   * @route   GET /api/users/verify-email/:token
+   * @access  Public
+   */
+  // export const verifyEmail = catchAsync(async (req: Request, res: Response) => {
+  //   const { token } = req.params;
+
+  //   // Hash the token from the URL to compare with stored hashed token
+  //   const hashedToken = crypto.createHash("sha256").update(token).digest("hex");
+
+  //   // Find user with the token and check if token is still valid
+  //   const user = await User.findOne({
+  //     emailVerificationToken: hashedToken,
+  //     emailVerificationExpires: { $gt: Date.now() },
+  //   });
+
+  //   if (!user) {
+  //     return res.status(400).json({
+  //       status: "fail",
+  //       message: "Token is invalid or has expired",
+  //     });
+  //   }
+
+  //   // Update user verification status
+  //   user.isEmailVerified = true;
+  //   user.emailVerificationToken = undefined;
+  //   user.emailVerificationExpires = undefined;
+  //   await user.save({ validateBeforeSave: false });
+
+  //   res.status(200).json({
+  //     status: "success",
+  //     message: "Email verified successfully",
+  //   });
+  // });
+
+  /**
+   * @desc    Reset password
+   * @route   POST /api/users/reset-password/:token
+   * @access  Public
+   */
+  // export const resetPassword = catchAsync(async (req: Request, res: Response) => {
+  //   const { token } = req.params;
+  //   const { password } = req.body;
+
+  //   // Hash the token from the URL to compare with stored hashed token
+  //   const hashedToken = crypto.createHash("sha256").update(token).digest("hex");
+
+  //   // Find user with the token and check if token is still valid
+  //   const user = await User.findOne({
+  //     passwordResetToken: hashedToken,
+  //     passwordResetExpires: { $gt: Date.now() },
+  //   });
+
+  //   if (!user) {
+  //     return res.status(400).json({
+  //       status: "fail",
+  //       message: "Token is invalid or has expired",
+  //     });
+  //   }
+
+  //   // Update password and clear reset token fields
+  //   user.password = password;
+  //   user.passwordResetToken = undefined;
+  //   user.passwordResetExpires = undefined;
+  //   await user.save();
+
+  //   // Generate new JWT token for the user
+  //   const jwtToken = generateToken(user._id);
+
+  //   res.status(200).json({
+  //     status: "success",
+  //     message: "Password reset successfully",
+  //     data: {
+  //       token: jwtToken,
+  //     },
+  //   });
+  // });
+}
+export default new AuthController();
