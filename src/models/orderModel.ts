@@ -343,32 +343,47 @@ orderSchema.pre("save", function (next) {
 
 // Validate prices before saving
 orderSchema.pre("save", function (next) {
-  // Calculate expected subtotal from order items
-  const calculatedSubtotal = this.orderItems.reduce(
+  // Calculate expected itemsPrice from order items
+  const calculatedItemsPrice = this.orderItems.reduce(
     (sum, item) => sum + item.price * item.quantity,
     0
   );
 
-  // Allow small rounding differences (0.01)
-  if (Math.abs(calculatedSubtotal - this.itemsPrice) > 0.01) {
+  // Validate itemsPrice matches sum of items (allow 0.02 tolerance for rounding)
+  if (Math.abs(calculatedItemsPrice - this.itemsPrice) > 0.02) {
     return next(
       new Error(
-        `Items price mismatch. Expected: ${calculatedSubtotal.toFixed(
+        `Items price mismatch. Expected: ${calculatedItemsPrice.toFixed(
           2
         )}, Got: ${this.itemsPrice.toFixed(2)}`
       )
     );
   }
 
+  // Validate subtotal calculation (itemsPrice - discount)
+  const expectedSubtotal = this.itemsPrice - this.discountAmount;
+  if (Math.abs(expectedSubtotal - this.subtotal) > 0.02) {
+    return next(
+      new Error(
+        `Subtotal mismatch. Expected: ${expectedSubtotal.toFixed(
+          2
+        )}, Got: ${this.subtotal.toFixed(2)}`
+      )
+    );
+  }
+
   // Validate total price calculation
-  const expectedTotal =
-    this.subtotal + this.taxPrice + this.shippingPrice - this.discountAmount;
-  if (Math.abs(expectedTotal - this.totalPrice) > 0.01) {
+  // Total = subtotal (already discounted) + tax + shipping
+  const expectedTotal = this.subtotal + this.taxPrice + this.shippingPrice;
+
+  if (Math.abs(expectedTotal - this.totalPrice) > 0.02) {
     return next(
       new Error(
         `Total price mismatch. Expected: ${expectedTotal.toFixed(
           2
-        )}, Got: ${this.totalPrice.toFixed(2)}`
+        )}, Got: ${this.totalPrice.toFixed(2)} (Subtotal: ${
+          this.subtotal
+        }, Tax: ${this.taxPrice}, Shipping: ${this.shippingPrice})`
       )
     );
   }

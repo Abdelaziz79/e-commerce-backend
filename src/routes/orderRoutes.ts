@@ -54,8 +54,7 @@ orderRouter
   )
   .get(protect, admin, validatePagination, handleValidationErrors, getOrders);
 
-// Admin search and analytics routes
-orderRouter.route("/search").get(protect, admin, searchOrders);
+orderRouter.route("/search").get(protect, searchOrders);
 
 orderRouter.route("/analytics").get(protect, admin, getOrderAnalytics);
 

@@ -79,7 +79,7 @@ export const updateUserProfile = catchAsync(
         avatar: updatedUser.avatar,
         isEmailVerified: updatedUser.isEmailVerified,
         phone: updatedUser.phone,
-        token: generateToken(updatedUser._id),
+        token: generateToken(updatedUser._id as string),
       },
     });
   }
@@ -240,7 +240,8 @@ export const addUserAddress = catchAsync(
       return res.status(404).json({ message: "User not found" });
     }
 
-    const { address, city, postalCode, country, isDefault } = req.body;
+    const { address, city, postalCode, country, isDefault, phoneNumber } =
+      req.body;
 
     const newAddress: Address = {
       address,
@@ -248,6 +249,7 @@ export const addUserAddress = catchAsync(
       postalCode,
       country,
       isDefault: isDefault || false,
+      phoneNumber,
     };
 
     // If new address is default, remove default from other addresses

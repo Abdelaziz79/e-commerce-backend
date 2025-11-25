@@ -1,3 +1,4 @@
+// src/middleware/authMiddleware.ts - Updated with status check
 import { Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import User from "../models/userModel";
@@ -31,6 +32,25 @@ export const protect = async (
         return res.status(401).json({
           status: "error",
           message: "User not found",
+        });
+      }
+
+      // NEW: Check if user is banned or suspended
+      if (user.status === "banned") {
+        return res.status(403).json({
+          status: "error",
+          message: "Your account has been banned",
+          reason: user.banReason,
+          bannedAt: user.bannedAt,
+        });
+      }
+
+      if (user.status === "suspended") {
+        return res.status(403).json({
+          status: "error",
+          message: "Your account has been suspended",
+          reason: user.banReason,
+          suspendedAt: user.bannedAt,
         });
       }
 

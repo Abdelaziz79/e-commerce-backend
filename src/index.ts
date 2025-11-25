@@ -10,6 +10,8 @@ import {
   handleUploadError,
   notFound,
 } from "./middleware/errorMiddleware";
+import adminRoutes from "./routes/adminRoutes";
+import adminSettingsRoutes from "./routes/adminSettingsRoutes";
 import authRoutes from "./routes/authRoutes";
 import brandRoutes from "./routes/brandRoutes";
 import categoryRoutes from "./routes/categoryRoutes";
@@ -17,9 +19,12 @@ import orderRoutes from "./routes/orderRoutes";
 import productRoutes from "./routes/productRoutes";
 import reviewRoutes from "./routes/reviewRoutes";
 import userRoutes from "./routes/userRoutes";
+import { initializeAdminSettings } from "./utils/initializeSettings";
 
 // Connect to MongoDB
-connectDB();
+connectDB().then(async () => {
+  await initializeAdminSettings();
+});
 
 // Initialize Express
 const app = express();
@@ -58,6 +63,8 @@ app.use("/api/v1/orders", orderRoutes);
 app.use("/api/v1/categories", categoryRoutes);
 app.use("/api/v1/brands", brandRoutes);
 app.use("/api/v1/reviews", reviewRoutes);
+app.use("/api/v1/admin", adminRoutes);
+app.use("/api/v1/admin-settings", adminSettingsRoutes);
 
 // Error Middleware (ORDER MATTERS!)
 // 1. Handle upload errors first

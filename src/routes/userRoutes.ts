@@ -1,13 +1,14 @@
+// src/routes/userRoutes.ts (Updated cart section)
 import express from "express";
 import {
   addToCart,
+  calculateCartTotals,
   clearCart,
   getCart,
   removeFromCart,
   updateCartItem,
 } from "../controllers/cartController";
 import {
-  toggleFavorite,
   addUserAddress,
   deleteAvatar,
   deleteUserAddress,
@@ -16,6 +17,7 @@ import {
   getUserProfile,
   getUsers,
   removeFromFavorites,
+  toggleFavorite,
   updateUserAddress,
   updateUserPassword,
   updateUserProfile,
@@ -24,6 +26,8 @@ import {
 import { admin, protect } from "../middleware/authMiddleware";
 import {
   validateAddToCart,
+  validateCalculateCartTotals,
+  validateRemoveFromCart,
   validateUpdateCartItem,
 } from "../middleware/cartValidationMiddleware";
 import { handleValidationErrors } from "../middleware/errorMiddleware";
@@ -110,6 +114,17 @@ userRouter
   )
   .delete(protect, ecommerceRateLimiters.cart, clearCart);
 
+// NEW: Cart calculation endpoint with admin settings
+userRouter
+  .route("/cart/calculate")
+  .post(
+    protect,
+    ecommerceRateLimiters.cart,
+    validateCalculateCartTotals,
+    handleValidationErrors,
+    calculateCartTotals
+  );
+
 userRouter
   .route("/cart/:productId")
   .put(
@@ -119,7 +134,13 @@ userRouter
     handleValidationErrors,
     updateCartItem
   )
-  .delete(protect, ecommerceRateLimiters.cart, removeFromCart);
+  .delete(
+    protect,
+    ecommerceRateLimiters.cart,
+    validateRemoveFromCart,
+    handleValidationErrors,
+    removeFromCart
+  );
 
 // Favorites routes with specific rate limiting
 userRouter

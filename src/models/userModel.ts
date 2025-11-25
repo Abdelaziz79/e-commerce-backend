@@ -1,10 +1,10 @@
-// Updated user.model.ts
+// Updated user.model.ts - Added status field
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import mongoose, { Schema } from "mongoose";
 import { UserDocument } from "../types/user.types";
 
-// Cart item schema - Updated for consistency
+// Cart item schema
 const cartItemSchema = new Schema(
   {
     product: {
@@ -41,7 +41,6 @@ const cartItemSchema = new Schema(
       },
     },
     variation: {
-      // Updated to match order model naming
       size: String,
       color: String,
       material: String,
@@ -50,7 +49,7 @@ const cartItemSchema = new Schema(
     },
   },
   { _id: false }
-); // Don't create _id for subdocuments
+);
 
 // Address schema
 const addressSchema = new Schema(
@@ -75,13 +74,18 @@ const addressSchema = new Schema(
       required: true,
       trim: true,
     },
+    phoneNumber: {
+      type: String,
+      trim: true,
+      match: [/^\+?[\d\s-()]{10,20}$/, "Please enter a valid phone number"],
+    },
     isDefault: {
       type: Boolean,
       default: false,
     },
   },
   { _id: true }
-); // Keep _id for addresses so they can be referenced
+);
 
 // Favorite product schema
 const favoriteProductSchema = new Schema(
@@ -153,6 +157,24 @@ const userSchema = new Schema<UserDocument>(
       enum: ["user", "admin"],
       default: "user",
     },
+    // NEW: User status field
+    status: {
+      type: String,
+      enum: ["active", "banned", "suspended"],
+      default: "active",
+    },
+    // NEW: Ban details
+    banReason: {
+      type: String,
+      trim: true,
+    },
+    bannedAt: {
+      type: Date,
+    },
+    bannedBy: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+    },
     avatar: {
       type: String,
       default: "/uploads/avatars/default-avatar.png",
@@ -195,6 +217,8 @@ const userSchema = new Schema<UserDocument>(
 userSchema.index({ "cart.product": 1 });
 userSchema.index({ "favorites.product": 1 });
 userSchema.index({ "orderHistory.order": 1 });
+userSchema.index({ status: 1 });
+// userSchema.index({ email: 1 });
 
 // Hash the password before saving
 userSchema.pre("save", async function (next) {
@@ -225,7 +249,6 @@ userSchema.methods.createPasswordResetToken = function (): string {
     .update(resetToken)
     .digest("hex");
 
-  // Token expires in 10 minutes
   this.passwordResetExpires = new Date(Date.now() + 10 * 60 * 1000);
 
   return resetToken;
@@ -240,7 +263,6 @@ userSchema.methods.createEmailVerificationToken = function (): string {
     .update(verificationToken)
     .digest("hex");
 
-  // Token expires in 24 hours
   this.emailVerificationExpires = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
   return verificationToken;

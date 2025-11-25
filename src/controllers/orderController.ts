@@ -1,5 +1,5 @@
 import { Response } from "express";
-import mongoose, { FilterQuery } from "mongoose";
+import mongoose, { FilterQuery, Types } from "mongoose";
 import Order from "../models/orderModel";
 import Product from "../models/productModel";
 import User from "../models/userModel";
@@ -7,7 +7,10 @@ import { OrderDocument, OrderStatus } from "../types/order.types";
 import { AuthRequest } from "../types/user.types";
 import APIFeatures from "../utils/apiFeatures";
 import catchAsync from "../utils/catchAsync";
-
+import {
+  calculateOrderTotals,
+  recordDiscountUsage,
+} from "../utils/orderCalculations";
 interface PopulatedUser {
   _id: mongoose.Types.ObjectId;
   name: string;
@@ -15,7 +18,7 @@ interface PopulatedUser {
 }
 
 /**
- * @desc    Create new order
+ * @desc    Create new order with admin settings integration
  * @route   POST /api/orders
  * @access  Private
  */
@@ -28,17 +31,8 @@ export const createOrder = catchAsync(
       });
     }
 
-    const {
-      orderItems,
-      shippingAddress,
-      paymentMethod,
-      itemsPrice,
-      taxPrice,
-      shippingPrice,
-      totalPrice,
-      discount,
-      notes,
-    } = req.body;
+    const { orderItems, shippingAddress, paymentMethod, notes, discountCode } =
+      req.body;
 
     // Validate order items
     if (!orderItems || orderItems.length === 0) {
@@ -66,7 +60,9 @@ export const createOrder = catchAsync(
 
         const products = await Product.find<any>({
           _id: { $in: uniqueProductIds },
-        }).session(session);
+        })
+          .populate("category", "_id name")
+          .session(session);
 
         // Check if we found all unique products
         if (products.length !== uniqueProductIds.length) {
@@ -80,11 +76,23 @@ export const createOrder = catchAsync(
         const productMap = new Map(products.map((p) => [p._id.toString(), p]));
 
         // Validate items and check stock
+        const stockErrors: Array<{
+          productName: string;
+          variation?: string;
+          requested: number;
+          available: number;
+        }> = [];
+
         const stockUpdates: Array<{
           productId: string;
           sku?: string;
           quantity: number;
         }> = [];
+
+        // Collect product IDs and category IDs for discount validation
+        const allProductIds: string[] = [];
+        const allCategoryIds: Set<string> = new Set();
+        let totalWeight = 0;
 
         for (const item of orderItems) {
           const product = productMap.get(item.product);
@@ -92,11 +100,23 @@ export const createOrder = catchAsync(
             throw new Error(`Product with ID ${item.product} not found`);
           }
 
+          allProductIds.push(item.product);
+          if (product.category) {
+            allCategoryIds.add(product.category._id.toString());
+          }
+
           let expectedPrice = product.price;
           let availableStock = product.countInStock;
+          let variationLabel = "";
 
           // Handle variations
-          if (product.hasVariations && item.variation?.sku) {
+          if (item.variation && item.variation.sku) {
+            if (!product.hasVariations) {
+              throw new Error(
+                `Product "${product.name}" does not support variations`
+              );
+            }
+
             const variation = product.variations?.find(
               (v: any) => v.sku === item.variation.sku
             );
@@ -110,71 +130,130 @@ export const createOrder = catchAsync(
             expectedPrice = variation.price;
             availableStock = variation.countInStock;
 
+            const varParts = [];
+            if (variation.size) varParts.push(`Size: ${variation.size}`);
+            if (variation.color) varParts.push(`Color: ${variation.color}`);
+            if (variation.material)
+              varParts.push(`Material: ${variation.material}`);
+            if (variation.style) varParts.push(`Style: ${variation.style}`);
+            variationLabel =
+              varParts.length > 0 ? ` (${varParts.join(", ")})` : "";
+
             stockUpdates.push({
               productId: item.product,
               sku: item.variation.sku,
               quantity: item.quantity,
             });
           } else {
+            if (product.onSale && product.salePrice) {
+              expectedPrice = product.salePrice;
+            }
+
             stockUpdates.push({
               productId: item.product,
               quantity: item.quantity,
             });
           }
 
-          // Validate stock
+          // Calculate total weight
+          totalWeight += (product.weight || 0) * item.quantity;
+
+          // Check stock availability
           if (availableStock < item.quantity) {
-            throw new Error(
-              `Insufficient stock for "${product.name}". Available: ${availableStock}, Requested: ${item.quantity}`
-            );
+            stockErrors.push({
+              productName: `${product.name}${variationLabel}`,
+              variation: item.variation?.sku,
+              requested: item.quantity,
+              available: availableStock,
+            });
           }
 
-          // Validate price (allow 0.01 difference for rounding)
-          if (Math.abs(expectedPrice - item.price) > 0.01) {
+          // Validate price - UPDATED: Allow for small rounding differences
+          // Changed from 0.01 to 0.02 to be more lenient with floating point arithmetic
+          const priceDifference = Math.abs(expectedPrice - item.price);
+          if (priceDifference > 0.02) {
             throw new Error(
               `Price mismatch for "${
                 product.name
-              }". Expected: ${expectedPrice.toFixed(
+              }"${variationLabel}. Expected: ${expectedPrice.toFixed(
                 2
-              )}, Got: ${item.price.toFixed(2)}`
+              )}, Got: ${item.price.toFixed(
+                2
+              )}, Difference: ${priceDifference.toFixed(2)}`
             );
           }
         }
 
-        // Calculate and validate prices
+        // Return stock errors if any
+        if (stockErrors.length > 0) {
+          const errorMessage = stockErrors
+            .map(
+              (err) =>
+                `"${err.productName}": Requested ${err.requested}, Available ${err.available}`
+            )
+            .join(" | ");
+
+          throw new Error(
+            `Insufficient stock for ${stockErrors.length} item(s): ${errorMessage}`
+          );
+        }
+
+        // Calculate items price
         const calculatedItemsPrice = orderItems.reduce(
           (sum: number, item: any) => sum + item.price * item.quantity,
           0
         );
 
-        if (Math.abs(calculatedItemsPrice - itemsPrice) > 0.01) {
-          throw new Error(
-            `Items price mismatch. Expected: ${calculatedItemsPrice.toFixed(
-              2
-            )}, Got: ${itemsPrice.toFixed(2)}`
-          );
+        // IMPORTANT: Recalculate totals on backend to ensure accuracy
+        const totals = await calculateOrderTotals(
+          calculatedItemsPrice,
+          shippingAddress,
+          totalWeight,
+          discountCode,
+          allProductIds,
+          Array.from(allCategoryIds),
+          req.user!._id.toString()
+        );
+
+        // Debug logging
+        console.log("=== ORDER CALCULATION DEBUG ===");
+        console.log("Calculated Items Price:", calculatedItemsPrice);
+        console.log("Backend Totals:", {
+          itemsPrice: totals.itemsPrice,
+          subtotal: totals.subtotal,
+          discount: totals.discountAmount,
+          tax: totals.taxPrice,
+          shipping: totals.shippingPrice,
+          total: totals.totalPrice,
+        });
+        console.log("Frontend Sent:", {
+          itemsPrice: req.body.itemsPrice,
+          subtotal: req.body.subtotal,
+          discount: req.body.discountAmount,
+          tax: req.body.taxPrice,
+          shipping: req.body.shippingPrice,
+          total: req.body.totalPrice,
+        });
+        console.log("===============================");
+
+        // If discount code error, reject the order
+        if (totals.error && discountCode) {
+          throw new Error(`Discount code error: ${totals.error}`);
         }
 
-        // Calculate discount amount based on type
-        let discountAmount = 0;
-        if (discount?.value) {
-          if (discount.type === "percentage") {
-            discountAmount = (calculatedItemsPrice * discount.value) / 100;
-          } else if (discount.type === "fixed") {
-            discountAmount = discount.value;
-          }
-        }
-
-        const subtotal = calculatedItemsPrice;
-        const calculatedTotal =
-          subtotal + taxPrice + shippingPrice - discountAmount;
-
-        if (Math.abs(calculatedTotal - totalPrice) > 0.01) {
-          throw new Error(
-            `Total price mismatch. Expected: ${calculatedTotal.toFixed(
-              2
-            )}, Got: ${totalPrice.toFixed(2)}`
+        // Optional: Verify frontend calculations match backend (for security)
+        const frontendTotal = req.body.totalPrice;
+        if (
+          frontendTotal &&
+          Math.abs(frontendTotal - totals.totalPrice) > 0.1
+        ) {
+          // Increased tolerance to 0.10 for debugging
+          console.warn(
+            `⚠️ Price mismatch detected: Frontend ${frontendTotal}, Backend ${
+              totals.totalPrice
+            }, Difference: ${Math.abs(frontendTotal - totals.totalPrice)}`
           );
+          // Still use backend calculated values
         }
 
         // Update stock for all items
@@ -213,26 +292,38 @@ export const createOrder = catchAsync(
           }
         }
 
-        // Create order
+        // Create order with BACKEND calculated totals (never trust frontend)
         const order = new Order({
           user: req.user!._id,
           orderItems,
           shippingAddress,
           paymentMethod,
-          itemsPrice,
-          subtotal,
-          taxPrice,
-          shippingPrice,
-          totalPrice,
-          discount,
-          discountAmount,
+          itemsPrice: totals.itemsPrice,
+          subtotal: totals.subtotal,
+          taxPrice: totals.taxPrice,
+          shippingPrice: totals.shippingPrice,
+          totalPrice: totals.totalPrice,
+          discount: totals.discountDetails
+            ? {
+                code: totals.discountDetails.code,
+                type: totals.discountDetails.type,
+                value: totals.discountDetails.value,
+                description: totals.discountDetails.description,
+              }
+            : undefined,
+          discountAmount: totals.discountAmount,
           notes,
           status: "pending",
         });
 
         const savedOrder = await order.save({ session });
 
-        // Update user's order history
+        // Record discount usage if discount was applied
+        if (discountCode && totals.discountAmount > 0) {
+          await recordDiscountUsage(discountCode, req.user!._id.toString());
+        }
+
+        // Update user's order history and clear cart
         await User.findByIdAndUpdate(
           req.user!._id,
           {
@@ -261,6 +352,38 @@ export const createOrder = catchAsync(
         data: { order: createdOrder },
       });
     } catch (error: any) {
+      // Parse stock error for better response
+      if (error.message.includes("Insufficient stock")) {
+        const stockErrorMatch = error.message.match(
+          /Insufficient stock for (\d+) item\(s\): (.+)/
+        );
+        if (stockErrorMatch) {
+          const [, count, details] = stockErrorMatch;
+          const items = details
+            .split(" | ")
+            .map((item: string) => {
+              const match = item.match(
+                /"(.+)": Requested (\d+), Available (\d+)/
+              );
+              if (match) {
+                return {
+                  product: match[1],
+                  requested: parseInt(match[2]),
+                  available: parseInt(match[3]),
+                };
+              }
+              return null;
+            })
+            .filter(Boolean);
+
+          return res.status(400).json({
+            status: "error",
+            message: `Cannot complete order. ${count} item(s) do not have sufficient stock.`,
+            stockErrors: items,
+          });
+        }
+      }
+
       return res.status(400).json({
         status: "error",
         message: error.message || "Failed to create order",
@@ -268,6 +391,262 @@ export const createOrder = catchAsync(
     } finally {
       await session.endSession();
     }
+  }
+);
+
+/**
+ * @desc    Cancel order
+ * @route   PUT /api/orders/:id/cancel
+ * @access  Private
+ */
+export const cancelOrder = catchAsync(
+  async (req: AuthRequest, res: Response) => {
+    if (!req.user?._id) {
+      return res.status(401).json({
+        status: "error",
+        message: "Not authorized",
+      });
+    }
+
+    const session = await mongoose.startSession();
+
+    try {
+      const updatedOrder = await session.withTransaction(async () => {
+        const order = await Order.findById(req.params.id).session(session);
+
+        if (!order) {
+          throw new Error("Order not found");
+        }
+
+        // Check authorization
+        const orderUserId = order.user.toString();
+        if (
+          orderUserId !== req.user!._id.toString() &&
+          req.user!.role !== "admin"
+        ) {
+          throw new Error("Not authorized to cancel this order");
+        }
+
+        // Check if cancellable
+        if (!["pending", "processing"].includes(order.status)) {
+          throw new Error(`Cannot cancel order with status: ${order.status}`);
+        }
+
+        // Restore stock for each item
+        for (const item of order.orderItems) {
+          if (item.variation?.sku) {
+            // Restore variation stock
+            const result = await Product.updateOne(
+              {
+                _id: item.product,
+                "variations.sku": item.variation.sku,
+              },
+              {
+                $inc: { "variations.$.countInStock": item.quantity },
+              },
+              { session }
+            );
+
+            if (result.matchedCount === 0) {
+              throw new Error(
+                `Failed to restore stock for variation ${item.variation.sku}`
+              );
+            }
+          } else {
+            // Restore main product stock
+            const result = await Product.updateOne(
+              { _id: item.product },
+              {
+                $inc: { countInStock: item.quantity },
+              },
+              { session }
+            );
+
+            if (result.matchedCount === 0) {
+              throw new Error(
+                `Failed to restore stock for product ${item.product}`
+              );
+            }
+          }
+        }
+
+        order.status = "cancelled";
+        order.statusHistory.push({
+          status: "cancelled",
+          date: new Date(),
+          note: req.body.reason || "Order cancelled by user",
+        });
+
+        await order.save({ session });
+        return order;
+      });
+
+      res.status(200).json({
+        status: "success",
+        message: "Order cancelled successfully",
+        data: { order: updatedOrder },
+      });
+    } catch (error: any) {
+      return res.status(400).json({
+        status: "error",
+        message: error.message || "Failed to cancel order",
+      });
+    } finally {
+      await session.endSession();
+    }
+  }
+);
+
+/**
+ * @desc    Get order analytics
+ * @route   GET /api/orders/analytics
+ * @access  Private/Admin
+ */
+export const getOrderAnalytics = catchAsync(
+  async (req: AuthRequest, res: Response) => {
+    if (!req.user?._id || req.user.role !== "admin") {
+      return res.status(403).json({
+        status: "error",
+        message: "Not authorized",
+      });
+    }
+
+    const now = new Date();
+    const last24Hours = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const last30Days = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const last12Months = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
+
+    const [
+      statusCounts,
+      monthlyRevenue,
+      recentOrdersCount,
+      totalRevenue,
+      last24HoursStats,
+      last30DaysStats,
+      topProducts,
+    ] = await Promise.all([
+      // Status distribution
+      Order.aggregate([{ $group: { _id: "$status", count: { $sum: 1 } } }]),
+
+      // Monthly revenue for last 12 months (paid orders only)
+      Order.aggregate([
+        {
+          $match: {
+            isPaid: true,
+            createdAt: { $gte: last12Months },
+          },
+        },
+        {
+          $group: {
+            _id: {
+              year: { $year: "$createdAt" },
+              month: { $month: "$createdAt" },
+            },
+            revenue: { $sum: "$totalPrice" },
+            orders: { $sum: 1 },
+            averageOrderValue: { $avg: "$totalPrice" },
+          },
+        },
+        { $sort: { "_id.year": 1, "_id.month": 1 } },
+      ]),
+
+      // Recent orders (last 24 hours)
+      Order.countDocuments({ createdAt: { $gte: last24Hours } }),
+
+      // Total revenue (paid orders only)
+      Order.aggregate([
+        { $match: { isPaid: true } },
+        { $group: { _id: null, total: { $sum: "$totalPrice" } } },
+      ]),
+
+      // Last 24 hours stats (paid orders only)
+      Order.aggregate([
+        {
+          $match: {
+            createdAt: { $gte: last24Hours },
+            isPaid: true,
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            orders: { $sum: 1 },
+            revenue: { $sum: "$totalPrice" },
+          },
+        },
+      ]),
+
+      // Last 30 days stats (paid orders only)
+      Order.aggregate([
+        {
+          $match: {
+            createdAt: { $gte: last30Days },
+            isPaid: true,
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            orders: { $sum: 1 },
+            revenue: { $sum: "$totalPrice" },
+            averageOrderValue: { $avg: "$totalPrice" },
+          },
+        },
+      ]),
+
+      // Top selling products (from paid, non-cancelled orders)
+      Order.aggregate([
+        {
+          $match: {
+            status: { $nin: ["cancelled", "failed"] },
+            isPaid: true,
+          },
+        },
+        { $unwind: "$orderItems" },
+        {
+          $group: {
+            _id: {
+              product: "$orderItems.product",
+              variation: "$orderItems.variation.sku",
+            },
+            totalQuantity: { $sum: "$orderItems.quantity" },
+            totalRevenue: {
+              $sum: {
+                $multiply: ["$orderItems.quantity", "$orderItems.price"],
+              },
+            },
+            orderCount: { $sum: 1 },
+            productName: { $first: "$orderItems.name" },
+            variationDetails: { $first: "$orderItems.variation" },
+          },
+        },
+        { $sort: { totalQuantity: -1 } },
+        { $limit: 10 },
+      ]),
+    ]);
+
+    res.status(200).json({
+      status: "success",
+      data: {
+        overview: {
+          totalOrders: statusCounts.reduce((sum, s) => sum + s.count, 0),
+          totalRevenue: totalRevenue[0]?.total || 0,
+          recentOrdersCount,
+        },
+        statusDistribution: statusCounts.reduce((acc: any, item) => {
+          acc[item._id] = item.count;
+          return acc;
+        }, {}),
+        last24Hours: last24HoursStats[0] || { orders: 0, revenue: 0 },
+        last30Days: last30DaysStats[0] || {
+          orders: 0,
+          revenue: 0,
+          averageOrderValue: 0,
+        },
+        monthlyRevenue,
+        topProducts,
+      },
+    });
   }
 );
 
@@ -725,114 +1104,13 @@ export const addTrackingInfo = catchAsync(
 );
 
 /**
- * @desc    Cancel order
- * @route   PUT /api/orders/:id/cancel
- * @access  Private
- */
-export const cancelOrder = catchAsync(
-  async (req: AuthRequest, res: Response) => {
-    if (!req.user?._id) {
-      return res.status(401).json({
-        status: "error",
-        message: "Not authorized",
-      });
-    }
-
-    const session = await mongoose.startSession();
-
-    try {
-      const updatedOrder = await session.withTransaction(async () => {
-        const order = await Order.findById(req.params.id).session(session);
-
-        if (!order) {
-          throw new Error("Order not found");
-        }
-
-        // Check authorization
-        const orderUserId = order.user.toString();
-        if (
-          orderUserId !== req.user!._id.toString() &&
-          req.user!.role !== "admin"
-        ) {
-          throw new Error("Not authorized to cancel this order");
-        }
-
-        // Check if cancellable
-        if (!["pending", "processing"].includes(order.status)) {
-          throw new Error(`Cannot cancel order with status: ${order.status}`);
-        }
-
-        // Restore stock
-        for (const item of order.orderItems) {
-          if (item.variation?.sku) {
-            const result = await Product.updateOne(
-              {
-                _id: item.product,
-                "variations.sku": item.variation.sku,
-              },
-              {
-                $inc: { "variations.$.countInStock": item.quantity },
-              },
-              { session }
-            );
-
-            if (result.matchedCount === 0) {
-              throw new Error(
-                `Failed to restore stock for variation ${item.variation.sku}`
-              );
-            }
-          } else {
-            const result = await Product.updateOne(
-              { _id: item.product },
-              {
-                $inc: { countInStock: item.quantity },
-              },
-              { session }
-            );
-
-            if (result.matchedCount === 0) {
-              throw new Error(
-                `Failed to restore stock for product ${item.product}`
-              );
-            }
-          }
-        }
-
-        order.status = "cancelled";
-        order.statusHistory.push({
-          status: "cancelled",
-          date: new Date(),
-          note: req.body.reason || "Order cancelled by user",
-        });
-
-        await order.save({ session });
-        return order;
-      });
-
-      res.status(200).json({
-        status: "success",
-        message: "Order cancelled successfully",
-        data: { order: updatedOrder },
-      });
-    } catch (error: any) {
-      return res.status(400).json({
-        status: "error",
-        message: error.message || "Failed to cancel order",
-      });
-    } finally {
-      await session.endSession();
-    }
-  }
-);
-
-/**
  * @desc    Search orders
  * @route   GET /api/orders/search
- * @access  Private/Admin
+ * @access  Private (Users can search their own orders, Admins can search all)
  */
 export const searchOrders = catchAsync(
   async (req: AuthRequest, res: Response) => {
-    if (!req.user?._id || req.user.role !== "admin") {
+    if (!req.user?._id) {
       return res.status(403).json({
         status: "error",
         message: "Not authorized",
@@ -848,7 +1126,23 @@ export const searchOrders = catchAsync(
       });
     }
 
-    const searchQuery = {
+    // First, find users matching the search query (for admin searches)
+    let matchingUserIds: Types.ObjectId[] = [];
+    if (req.user.role === "admin") {
+      const matchingUsers = await User.find({
+        $or: [
+          { name: { $regex: q, $options: "i" } },
+          { email: { $regex: q, $options: "i" } },
+        ],
+      }).select("_id");
+
+      matchingUserIds = matchingUsers.map(
+        (user) => new Types.ObjectId(user._id)
+      );
+    }
+
+    // Build initial filter based on user role
+    const initialFilter: any = {
       $or: [
         { orderNumber: { $regex: q, $options: "i" } },
         { "shippingAddress.address": { $regex: q, $options: "i" } },
@@ -858,165 +1152,45 @@ export const searchOrders = catchAsync(
       ],
     };
 
-    const orders = await Order.find(searchQuery)
+    // Add user name/email search for admins
+    if (req.user.role === "admin" && matchingUserIds.length > 0) {
+      initialFilter.$or.push({ user: { $in: matchingUserIds } });
+    }
+
+    // Restrict to user's own orders if not admin
+    if (req.user.role !== "admin") {
+      initialFilter.user = req.user._id;
+    }
+
+    // Create query with initial filter
+    const query = Order.find(initialFilter)
       .populate("user", "name email")
-      .populate("orderItems.product", "name mainImage")
-      .sort({ createdAt: -1 })
-      .limit(20);
+      .populate("orderItems.product", "name mainImage");
+
+    // Apply API features (pagination, sorting, etc.)
+    const features = new APIFeatures(query, req.query)
+      .sort()
+      .limitFields()
+      .paginate();
+
+    // Execute query
+    const orders = await features.query;
+
+    // Get total count for pagination
+    const total = await features.getTotalCount();
+
+    // Calculate pagination info
+    const page = parseInt(String(req.query.page), 10) || 1;
+    const limit = parseInt(String(req.query.limit), 10) || 20;
+    const totalPages = Math.ceil(total / limit);
 
     res.status(200).json({
       status: "success",
       results: orders.length,
+      total,
+      page,
+      totalPages,
       data: { orders },
-    });
-  }
-);
-
-/**
- * @desc    Get order analytics
- * @route   GET /api/orders/analytics
- * @access  Private/Admin
- */
-export const getOrderAnalytics = catchAsync(
-  async (req: AuthRequest, res: Response) => {
-    if (!req.user?._id || req.user.role !== "admin") {
-      return res.status(403).json({
-        status: "error",
-        message: "Not authorized",
-      });
-    }
-
-    const now = new Date();
-    const last24Hours = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-    const last30Days = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-    const last12Months = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
-
-    const [
-      statusCounts,
-      monthlyRevenue,
-      recentOrdersCount,
-      totalRevenue,
-      last24HoursStats,
-      last30DaysStats,
-      topProducts,
-    ] = await Promise.all([
-      // Status distribution
-      Order.aggregate([{ $group: { _id: "$status", count: { $sum: 1 } } }]),
-
-      // Monthly revenue for last 12 months
-      Order.aggregate([
-        {
-          $match: {
-            isPaid: true,
-            createdAt: { $gte: last12Months },
-          },
-        },
-        {
-          $group: {
-            _id: {
-              year: { $year: "$createdAt" },
-              month: { $month: "$createdAt" },
-            },
-            revenue: { $sum: "$totalPrice" },
-            orders: { $sum: 1 },
-            averageOrderValue: { $avg: "$totalPrice" },
-          },
-        },
-        { $sort: { "_id.year": 1, "_id.month": 1 } },
-      ]),
-
-      // Recent orders (last 24 hours)
-      Order.countDocuments({ createdAt: { $gte: last24Hours } }),
-
-      // Total revenue (all time)
-      Order.aggregate([
-        { $match: { isPaid: true } },
-        { $group: { _id: null, total: { $sum: "$totalPrice" } } },
-      ]),
-
-      // Last 24 hours stats - FIXED: Only count paid orders
-      Order.aggregate([
-        {
-          $match: {
-            createdAt: { $gte: last24Hours },
-            isPaid: true,
-          },
-        },
-        {
-          $group: {
-            _id: null,
-            orders: { $sum: 1 },
-            revenue: { $sum: "$totalPrice" },
-          },
-        },
-      ]),
-
-      // Last 30 days stats - FIXED: Calculate average only from paid orders
-      Order.aggregate([
-        {
-          $match: {
-            createdAt: { $gte: last30Days },
-            isPaid: true,
-          },
-        },
-        {
-          $group: {
-            _id: null,
-            orders: { $sum: 1 },
-            revenue: { $sum: "$totalPrice" },
-            averageOrderValue: { $avg: "$totalPrice" },
-          },
-        },
-      ]),
-
-      // Top selling products - FIXED: Only from paid, non-cancelled orders
-      Order.aggregate([
-        {
-          $match: {
-            status: { $nin: ["cancelled", "failed"] },
-            isPaid: true,
-          },
-        },
-        { $unwind: "$orderItems" },
-        {
-          $group: {
-            _id: "$orderItems.product",
-            totalQuantity: { $sum: "$orderItems.quantity" },
-            totalRevenue: {
-              $sum: {
-                $multiply: ["$orderItems.quantity", "$orderItems.price"],
-              },
-            },
-            orderCount: { $sum: 1 },
-            productName: { $first: "$orderItems.name" },
-          },
-        },
-        { $sort: { totalQuantity: -1 } },
-        { $limit: 10 },
-      ]),
-    ]);
-
-    res.status(200).json({
-      status: "success",
-      data: {
-        overview: {
-          totalOrders: statusCounts.reduce((sum, s) => sum + s.count, 0),
-          totalRevenue: totalRevenue[0]?.total || 0,
-          recentOrdersCount,
-        },
-        statusDistribution: statusCounts.reduce((acc: any, item) => {
-          acc[item._id] = item.count;
-          return acc;
-        }, {}),
-        last24Hours: last24HoursStats[0] || { orders: 0, revenue: 0 },
-        last30Days: last30DaysStats[0] || {
-          orders: 0,
-          revenue: 0,
-          averageOrderValue: 0,
-        },
-        monthlyRevenue,
-        topProducts,
-      },
     });
   }
 );

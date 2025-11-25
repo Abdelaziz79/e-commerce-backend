@@ -90,10 +90,14 @@ export const validateCreateOrder: ValidationChain[] = [
     .isIn(["card", "paypal", "stripe", "cod", "bank_transfer"])
     .withMessage("Invalid payment method"),
 
-  // Price validations
+  // Price validations - THESE ARE NOW REQUIRED FROM FRONTEND
   body("itemsPrice")
     .isFloat({ min: 0 })
     .withMessage("Items price must be a positive number"),
+
+  body("subtotal")
+    .isFloat({ min: 0 })
+    .withMessage("Subtotal must be a positive number"),
 
   body("taxPrice")
     .isFloat({ min: 0 })
@@ -107,22 +111,17 @@ export const validateCreateOrder: ValidationChain[] = [
     .isFloat({ min: 0 })
     .withMessage("Total price must be a positive number"),
 
+  body("discountAmount")
+    .optional()
+    .isFloat({ min: 0 })
+    .withMessage("Discount amount must be a positive number"),
+
   // Optional discount validation
-  body("discount.code")
+  body("discountCode")
     .optional()
     .trim()
     .isLength({ min: 3, max: 50 })
     .withMessage("Discount code must be between 3 and 50 characters"),
-
-  body("discount.type")
-    .optional()
-    .isIn(["percentage", "fixed"])
-    .withMessage("Discount type must be percentage or fixed"),
-
-  body("discount.value")
-    .optional()
-    .isFloat({ min: 0 })
-    .withMessage("Discount value must be positive"),
 
   // Optional notes
   body("notes")

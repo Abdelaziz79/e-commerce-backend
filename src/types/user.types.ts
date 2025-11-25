@@ -1,8 +1,8 @@
-// Updated user.types.ts
+// src/types/user.types.ts - Updated with status fields
 import { Request } from "express";
-import { Document } from "mongoose";
+import { Document, Types } from "mongoose";
 
-// Updated cart item interface to match model
+// Cart item interface
 export interface CartItem {
   product: string; // Product ID
   name: string; // Product name for quick access
@@ -10,7 +10,6 @@ export interface CartItem {
   quantity: number;
   image: string; // Product image for quick access
   variation?: {
-    // Added variation support to match model
     size?: string;
     color?: string;
     material?: string;
@@ -19,14 +18,15 @@ export interface CartItem {
   };
 }
 
-// Updated address interface to match model requirements
+// Address interface
 export interface Address {
-  _id?: string; // Added to match model
+  _id?: string;
   address: string;
   city: string;
   postalCode: string;
   country: string;
-  isDefault: boolean; // Made required to match model default
+  isDefault: boolean;
+  phoneNumber?: string;
 }
 
 // Favorite product interface
@@ -44,12 +44,19 @@ export interface OrderHistory {
 }
 
 export interface UserDocument extends Document {
-  _id: string;
+  _id: Types.ObjectId | string;
   name: string;
   email: string;
   password: string;
   role: "user" | "admin";
-  avatar: string; // User profile avatar
+
+  // NEW: Status fields
+  status: "active" | "banned" | "suspended";
+  banReason?: string;
+  bannedAt?: Date;
+  bannedBy?: Types.ObjectId;
+
+  avatar: string;
   isEmailVerified: boolean;
   emailVerificationToken?: string;
   emailVerificationExpires?: Date;
@@ -57,11 +64,11 @@ export interface UserDocument extends Document {
   passwordResetExpires?: Date;
 
   // Essential ecommerce fields
-  cart: CartItem[]; // Shopping cart
-  addresses: Address[]; // Shipping addresses
-  favorites: FavoriteProduct[]; // Favorite/wishlist products
-  orderHistory: OrderHistory[]; // Quick reference to user's orders
-  phone?: string; // For delivery contact
+  cart: CartItem[];
+  addresses: Address[];
+  favorites: FavoriteProduct[];
+  orderHistory: OrderHistory[];
+  phone?: string;
 
   createdAt: Date;
   updatedAt: Date;

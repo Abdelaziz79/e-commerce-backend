@@ -40,7 +40,7 @@ export const loginUser = catchAsync(async (req: Request, res: Response) => {
       email: user.email,
       role: user.role,
       isEmailVerified: user.isEmailVerified,
-      token: generateToken(user._id),
+      token: generateToken(user._id as string),
     },
   });
 });
@@ -87,7 +87,7 @@ export const registerUser = catchAsync(async (req: Request, res: Response) => {
         email: user.email,
         role: user.role,
         isEmailVerified: user.isEmailVerified,
-        token: generateToken(user._id),
+        token: generateToken(user._id as string),
       },
       // In a real application, you would remove the following line
       verificationURL: verificationURL,
@@ -108,7 +108,7 @@ export const registerUser = catchAsync(async (req: Request, res: Response) => {
         email: user.email,
         role: user.role,
         isEmailVerified: user.isEmailVerified,
-        token: generateToken(user._id),
+        token: generateToken(user._id as string),
       },
     });
   }
@@ -232,7 +232,7 @@ export const resetPassword = catchAsync(async (req: Request, res: Response) => {
   await user.save();
 
   // Generate new JWT token for the user
-  const jwtToken = generateToken(user._id);
+  const jwtToken = generateToken(user._id as string);
 
   res.status(200).json({
     status: "success",
