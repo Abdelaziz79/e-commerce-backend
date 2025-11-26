@@ -13,6 +13,8 @@ import {
   getProductStats,
   searchProducts,
   updateProduct,
+  adjustVariationStock,
+  getOutOfStockProducts,
 } from "../controllers/productController";
 import { admin, protect } from "../middleware/authMiddleware";
 import { handleValidationErrors } from "../middleware/errorMiddleware";
@@ -58,7 +60,7 @@ productRouter
 // Product statistics
 productRouter.route("/stats").get(protect, admin, getProductStats);
 
-// Low stock products
+// Low stock products (main list)
 productRouter
   .route("/low-stock")
   .get(
@@ -68,6 +70,8 @@ productRouter
     handleValidationErrors,
     getLowStockProducts
   );
+
+productRouter.route("/out-of-stock").get(protect, admin, getOutOfStockProducts);
 
 // Bulk operations routes
 productRouter
@@ -121,6 +125,18 @@ productRouter
     validateStockAdjustment,
     handleValidationErrors,
     adjustStock
+  );
+
+// Variation stock adjustment route (NEW)
+productRouter
+  .route("/:id/variations/:variationId/stock")
+  .patch(
+    protect,
+    admin,
+    generalRateLimiters.strict,
+    validateStockAdjustment,
+    handleValidationErrors,
+    adjustVariationStock
   );
 
 // ============================================================================

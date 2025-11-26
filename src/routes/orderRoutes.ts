@@ -1,15 +1,17 @@
 import express from "express";
 import {
+  getOrderAnalytics,
+  getUserOrderStats,
+} from "../controllers/orderAnalyticsContorller";
+import {
   addTrackingInfo,
   cancelOrder,
   // Order management
   createOrder,
   exportOrders,
   getMyOrders,
-  getOrderAnalytics,
   getOrderById,
   getOrders,
-  getUserOrderStats,
   searchOrders,
   updateOrderStatus,
   updateOrderToDelivered,

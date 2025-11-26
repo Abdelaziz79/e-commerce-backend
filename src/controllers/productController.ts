@@ -597,30 +597,6 @@ export const bulkDeleteProducts = catchAsync(
 );
 
 /**
- * @desc    Get low stock products
- * @route   GET /api/products/low-stock
- * @access  Private/Admin
- */
-export const getLowStockProducts = catchAsync(
-  async (req: AuthRequest, res: Response) => {
-    const threshold = Number(req.query.threshold) || 10;
-
-    const products = await Product.find({
-      countInStock: { $lte: threshold, $gt: 0 },
-    })
-      .populate("category brand")
-      .sort("countInStock")
-      .limit(50);
-
-    res.status(200).json({
-      status: "success",
-      results: products.length,
-      data: products,
-    });
-  }
-);
-
-/**
  * @desc    Adjust product stock
  * @route   PATCH /api/products/:id/stock
  * @access  Private/Admin
@@ -656,6 +632,359 @@ export const adjustStock = catchAsync(
       status: "success",
       data: product,
       message: `Stock adjusted by ${adjustment}. Reason: ${reason || "N/A"}`,
+    });
+  }
+);
+
+/**
+ * @desc    Get low stock products (including variation stock)
+ * @route   GET /api/products/low-stock
+ * @access  Private/Admin
+ */
+export const getLowStockProducts = catchAsync(
+  async (req: AuthRequest, res: Response) => {
+    const threshold = Number(req.query.threshold) || 10;
+    const includeVariations = req.query.includeVariations !== "false"; // Default to true
+
+    // Use aggregation to handle both main product stock and variation stock
+    const products = await Product.aggregate([
+      {
+        // Stage 1: Add a computed field for low stock status
+        $addFields: {
+          lowStockVariations: {
+            $filter: {
+              input: "$variations",
+              as: "variation",
+              cond: {
+                $and: [
+                  { $lte: ["$$variation.countInStock", threshold] },
+                  { $gt: ["$$variation.countInStock", 0] },
+                ],
+              },
+            },
+          },
+          mainProductLowStock: {
+            $and: [
+              { $lte: ["$countInStock", threshold] },
+              { $gt: ["$countInStock", 0] },
+            ],
+          },
+        },
+      },
+      {
+        // Stage 2: Filter products that have either low main stock OR low variation stock
+        $match: {
+          $or: [
+            { mainProductLowStock: true },
+            ...(includeVariations ? [{ lowStockVariations: { $gt: [] } }] : []),
+          ],
+        },
+      },
+      {
+        // Stage 3: Sort by main stock first, then by lowest variation stock
+        $addFields: {
+          lowestVariationStock: {
+            $min: "$variations.countInStock",
+          },
+        },
+      },
+      {
+        $sort: {
+          countInStock: 1, // Main product stock ascending
+          lowestVariationStock: 1, // Then lowest variation stock
+        },
+      },
+      {
+        $limit: 50,
+      },
+      {
+        // Stage 4: Populate category and brand (using lookup)
+        $lookup: {
+          from: "categories",
+          localField: "category",
+          foreignField: "_id",
+          as: "category",
+        },
+      },
+      {
+        $unwind: {
+          path: "$category",
+          preserveNullAndEmptyArrays: true,
+        },
+      },
+      {
+        $lookup: {
+          from: "brands",
+          localField: "brand",
+          foreignField: "_id",
+          as: "brand",
+        },
+      },
+      {
+        $unwind: {
+          path: "$brand",
+          preserveNullAndEmptyArrays: true,
+        },
+      },
+      {
+        // Stage 5: Project to show relevant fields and stock info
+        $project: {
+          name: 1,
+          slug: 1,
+          price: 1,
+          salePrice: 1,
+          countInStock: 1,
+          hasVariations: 1,
+          variations: 1,
+          lowStockVariations: 1,
+          mainProductLowStock: 1,
+          category: { name: 1, slug: 1, _id: 1 },
+          brand: { name: 1, slug: 1, _id: 1 },
+          mainImage: 1,
+          images: 1,
+          featured: 1,
+          onSale: 1,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      },
+    ]);
+
+    // Format response with additional stock info
+    const productsWithStockInfo = products.map((product) => {
+      const variationCount = product.hasVariations
+        ? product.variations.length
+        : 0;
+      const lowVariationCount = product.lowStockVariations
+        ? product.lowStockVariations.length
+        : 0;
+
+      return {
+        ...product,
+        stockSummary: {
+          mainStock: product.countInStock,
+          mainStockStatus: product.mainProductLowStock ? "low" : "ok",
+          hasLowVariations: lowVariationCount > 0,
+          lowVariationCount,
+          totalVariations: variationCount,
+          affectedVariations: product.lowStockVariations || [],
+        },
+      };
+    });
+
+    res.status(200).json({
+      status: "success",
+      results: productsWithStockInfo.length,
+      threshold,
+      data: productsWithStockInfo,
+    });
+  }
+);
+
+/**
+ * @desc    Adjust product variation stock
+ * @route   PATCH /api/products/:id/variations/:variationId/stock
+ * @access  Private/Admin
+ */
+export const adjustVariationStock = catchAsync(
+  async (req: AuthRequest, res: Response) => {
+    const { id, variationId } = req.params;
+    const { adjustment, reason } = req.body;
+
+    if (typeof adjustment !== "number") {
+      return res.status(400).json({
+        message: "Adjustment must be a number",
+      });
+    }
+
+    const product = await Product.findById(id);
+
+    if (!product) {
+      return res.status(404).json({ message: "Product not found" });
+    }
+
+    // Find the variation - check both by ObjectId and by SKU
+    let variation;
+
+    if (product.variations && product.variations.length > 0) {
+      // Try to find by ID first (if it's an ObjectId)
+      variation = product.variations.find(
+        (v: any) => v._id?.toString() === variationId || v.sku === variationId
+      );
+    }
+
+    if (!variation) {
+      return res.status(404).json({ message: "Variation not found" });
+    }
+
+    const newStock = variation.countInStock + adjustment;
+
+    if (newStock < 0) {
+      return res.status(400).json({
+        message: "Insufficient stock for this variation",
+      });
+    }
+
+    // Update the variation stock
+    variation.countInStock = newStock;
+
+    // Save the product with the updated variation
+    await product.save();
+
+    res.status(200).json({
+      status: "success",
+      data: product,
+      message: `Variation stock (${
+        variation.sku
+      }) adjusted by ${adjustment}. Reason: ${reason || "N/A"}`,
+    });
+  }
+);
+
+/**
+ * @desc    Get out of stock products (including variation stock)
+ * @route   GET /api/products/out-of-stock
+ * @access  Private/Admin
+ */
+export const getOutOfStockProducts = catchAsync(
+  async (req: AuthRequest, res: Response) => {
+    const includeVariations = req.query.includeVariations !== "false"; // Default to true
+
+    // Use aggregation to handle both main product stock and variation stock
+    const products = await Product.aggregate([
+      {
+        // Stage 1: Add computed fields for out of stock status
+        $addFields: {
+          outOfStockVariations: {
+            $filter: {
+              input: "$variations",
+              as: "variation",
+              cond: { $eq: ["$$variation.countInStock", 0] },
+            },
+          },
+          mainProductOutOfStock: { $eq: ["$countInStock", 0] },
+        },
+      },
+      {
+        // Stage 2: Filter products that have either main stock = 0 OR variations with stock = 0
+        $match: {
+          $or: [
+            { mainProductOutOfStock: true },
+            ...(includeVariations
+              ? [{ outOfStockVariations: { $ne: [] } }]
+              : []),
+          ],
+        },
+      },
+      {
+        // Stage 3: Add count of out of stock variations for sorting
+        $addFields: {
+          outOfStockVariationCount: { $size: "$outOfStockVariations" },
+        },
+      },
+      {
+        // Stage 4: Sort - products completely out of stock first, then by variation count
+        $sort: {
+          mainProductOutOfStock: -1, // True (out of stock) first
+          outOfStockVariationCount: -1, // Most out of stock variations first
+          name: 1, // Then alphabetically
+        },
+      },
+      {
+        $limit: 50,
+      },
+      {
+        // Stage 5: Populate category (using lookup)
+        $lookup: {
+          from: "categories",
+          localField: "category",
+          foreignField: "_id",
+          as: "category",
+        },
+      },
+      {
+        $unwind: {
+          path: "$category",
+          preserveNullAndEmptyArrays: true,
+        },
+      },
+      {
+        // Stage 6: Populate brand (using lookup)
+        $lookup: {
+          from: "brands",
+          localField: "brand",
+          foreignField: "_id",
+          as: "brand",
+        },
+      },
+      {
+        $unwind: {
+          path: "$brand",
+          preserveNullAndEmptyArrays: true,
+        },
+      },
+      {
+        // Stage 7: Project to show relevant fields and stock info
+        $project: {
+          name: 1,
+          slug: 1,
+          price: 1,
+          salePrice: 1,
+          countInStock: 1,
+          hasVariations: 1,
+          variations: 1,
+          outOfStockVariations: 1,
+          mainProductOutOfStock: 1,
+          outOfStockVariationCount: 1,
+          category: { name: 1, slug: 1, _id: 1 },
+          brand: { name: 1, slug: 1, _id: 1 },
+          mainImage: 1,
+          images: 1,
+          featured: 1,
+          onSale: 1,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      },
+    ]);
+
+    // Format response with additional stock info
+    const productsWithStockInfo = products.map((product) => {
+      const variationCount = product.hasVariations
+        ? product.variations.length
+        : 0;
+      const outOfStockVariationCount = product.outOfStockVariations
+        ? product.outOfStockVariations.length
+        : 0;
+
+      // Calculate in-stock variations
+      const inStockVariationCount = product.hasVariations
+        ? product.variations.filter((v: any) => v.countInStock > 0).length
+        : 0;
+
+      return {
+        ...product,
+        stockSummary: {
+          mainStock: product.countInStock,
+          mainStockStatus: product.mainProductOutOfStock
+            ? "out_of_stock"
+            : "in_stock",
+          hasOutOfStockVariations: outOfStockVariationCount > 0,
+          outOfStockVariationCount,
+          inStockVariationCount,
+          totalVariations: variationCount,
+          affectedVariations: product.outOfStockVariations || [],
+          isCompletelyOutOfStock:
+            product.mainProductOutOfStock &&
+            (!product.hasVariations || inStockVariationCount === 0),
+        },
+      };
+    });
+
+    res.status(200).json({
+      status: "success",
+      results: productsWithStockInfo.length,
+      data: productsWithStockInfo,
     });
   }
 );
