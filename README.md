@@ -21,8 +21,6 @@ A comprehensive, production-ready RESTful API for an e-commerce platform built w
 - [Rate Limiting](#-rate-limiting)
 - [Testing](#-testing)
 - [Deployment](#-deployment)
-- [Contributing](#-contributing)
-- [License](#-license)
 
 ---
 
